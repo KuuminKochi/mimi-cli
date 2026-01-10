@@ -1,0 +1,15 @@
+# API Config
+deepseek_config.json
+*.json
+!config.json.example
+
+# Session Data
+Sessions/
+mimi_memory.log
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store

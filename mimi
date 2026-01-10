@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Ensure Script directory is in python path or accessible
+SCRIPT_DIR="/home/kuumin/Script"
+WATCHER_SCRIPT="$SCRIPT_DIR/mimi_memory_watcher.py"
+CLI_SCRIPT="$SCRIPT_DIR/mimi_cli.py"
+
+# Check if memory watcher is running
+if ! pgrep -f "mimi_memory_watcher.py" > /dev/null; then
+    echo "Starting Memory Watcher in background..."
+    nohup python3 "$WATCHER_SCRIPT" > "$SCRIPT_DIR/mimi_memory.log" 2>&1 &
+    # Give it a moment to initialize
+    sleep 1
+fi
+
+# Run the CLI interface
+python3 "$CLI_SCRIPT" "$@"
