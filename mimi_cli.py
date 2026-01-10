@@ -13,7 +13,7 @@ import termios
 import re
 import base64
 from datetime import datetime
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional
 from duckduckgo_search import DDGS
 
 # --- Configuration ---
@@ -39,15 +39,18 @@ class Colors:
     ITALIC = "\033[3m"
     HEADER_MIMI = f"{BOLD}{MAGENTA}"
     HEADER_USER = f"{BOLD}{GREEN}"
-    SYSTEM = f"{CYAN}"
 
 
 # --- Utils ---
 _prompt_cache = {"mtime": 0, "content": ""}
 
 
-def get_terminal_size():
-    return shutil.get_terminal_size((80, 24))
+def get_layout():
+    cols, rows = shutil.get_terminal_size((80, 24))
+    margin_size = int(cols * 0.15)
+    width = max(cols - (margin_size * 2), 40)
+    indent = " " * margin_size
+    return width, indent, cols, rows
 
 
 def strip_ansi(s: str) -> str:
@@ -79,30 +82,6 @@ def load_system_prompt() -> str:
         return _prompt_cache["content"] or "You are Mimi."
 
 
-def print_formatted(role: str, text: str, compact: bool = False):
-    width = min(get_terminal_size().columns - 20, 80)
-    indent_size = int((get_terminal_size().columns - width) / 2)
-    indent = " " * indent_size
-    if compact:
-        print(f"{indent}{Colors.BOLD}{role}:{Colors.RESET} {text}")
-    else:
-        color = Colors.MAGENTA if role == "Mimi" else Colors.GREEN
-        print(f"\n{indent}{color}╭── {role}{Colors.RESET}")
-        wrapper = textwrap.TextWrapper(
-            width=width,
-            initial_indent=f"{indent}{color}│ {Colors.RESET}",
-            subsequent_indent=f"{indent}{color}│ {Colors.RESET}",
-        )
-        for line in text.splitlines():
-            if not line.strip():
-                print(f"{indent}{color}│{Colors.RESET}")
-                continue
-            print(wrapper.fill(line))
-        print(
-            f"{indent}{color}╰──────────────────────────────────────────{Colors.RESET}"
-        )
-
-
 def ensure_thread_dir(thread_id: str) -> str:
     path = os.path.join(THREADS_DIR, thread_id)
     os.makedirs(path, exist_ok=True)
@@ -113,7 +92,9 @@ def ensure_thread_dir(thread_id: str) -> str:
 
 
 def log_to_jan_format(msg_file: str, role: str, content: Any, model_id: str = "s4sxg"):
-    log_content = str(content) if not isinstance(content, list) else "[Multimodal Data]"
+    log_content = (
+        str(content) if not isinstance(content, list) else "[Multimodal Input]"
+    )
     msg_data = {
         "id": str(uuid.uuid4()).replace("-", "").upper()[:26],
         "created_at": int(time.time() * 1000),
@@ -147,7 +128,7 @@ def autosave_turn(filepath: str, role: str, content: Any):
         f.write(f"**{role}** ({datetime.now().strftime('%H:%M')}):\n{save_content}\n\n")
 
 
-def load_session_from_file(filename: str) -> Union[List[Dict[str, Any]], None]:
+def load_session_from_file(filename: str) -> Optional[List[Dict[str, Any]]]:
     filepath = os.path.join(SESSION_DIR, filename)
     if not os.path.exists(filepath):
         return None
@@ -176,28 +157,90 @@ def load_session_from_file(filename: str) -> Union[List[Dict[str, Any]], None]:
         return None
 
 
-# --- Search Tool ---
-def web_search(query: str, flash: bool = True) -> str:
+# --- UI Formatting ---
+def print_formatted(role: str, text: str, compact: bool = False):
+    width, indent, _, _ = get_layout()
+    if compact:
+        print(f"{indent}{Colors.BOLD}{role}:{Colors.RESET} {text}")
+    else:
+        color = Colors.MAGENTA if role == "Mimi" else Colors.GREEN
+        print(f"\n{indent}{color}╭── {role}{Colors.RESET}")
+        wrapper = textwrap.TextWrapper(
+            width=width,
+            initial_indent=f"{indent}{color}│ {Colors.RESET}",
+            subsequent_indent=f"{indent}{color}│ {Colors.RESET}",
+        )
+        for line in text.splitlines():
+            if not line.strip():
+                print(f"{indent}{color}│{Colors.RESET}")
+                continue
+            print(wrapper.fill(line))
+        print(
+            f"{indent}{color}╰──────────────────────────────────────────{Colors.RESET}"
+        )
+
+
+def run_pager(history: List[Dict[str, Any]]):
+    content = []
+    for m in history:
+        if m["role"] == "system":
+            continue
+        role = "Mimi" if m["role"] == "assistant" else "Kuumin"
+        content.append(f"--- {role} ---")
+        content.append(str(m["content"]))
+        content.append("")
+
+    lines = "\n".join(content).splitlines()
+    _, _, _, rows = get_layout()
+    page_size = rows - 4
+    ptr = 0
+    while True:
+        os.system("clear")
+        print(
+            f"{Colors.CYAN}--- Mimi Pager (UP/DOWN to scroll, Q to exit) ---{Colors.RESET}"
+        )
+        for i in range(ptr, min(ptr + page_size, len(lines))):
+            print(lines[i])
+        print(
+            f"\n{Colors.DIM}Line {ptr + 1}/{len(lines)} | Press Q to return to chat...{Colors.RESET}"
+        )
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            key = sys.stdin.read(1)
+            if key == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq == "[A" and ptr > 0:
+                    ptr -= 1
+                if seq == "[B" and ptr < len(lines) - page_size:
+                    ptr += 1
+            elif key.lower() == "q":
+                break
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+# --- Search & Vision ---
+def web_search(query: str) -> str:
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=3 if flash else 8))
+            results = list(ddgs.text(query, max_results=3))
             if not results:
                 return "No results found."
-            formatted = []
-            for i, r in enumerate(results):
-                formatted.append(
-                    f"[NODE::{i + 1}] {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}"
-                )
+            formatted = [
+                f"[NODE::{i + 1}] {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}"
+                for i, r in enumerate(results)
+            ]
             return "\n\n".join(formatted)
     except Exception as e:
         return f"Search Error: {e}"
 
 
-# --- Vision Tool ---
-def encode_image(image_path: str) -> Union[str, None]:
+def encode_image(path: str) -> Optional[str]:
     try:
-        path = os.path.expanduser(image_path)
-        with open(path, "rb") as f:
+        with open(os.path.expanduser(path), "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
     except:
         return None
@@ -207,119 +250,27 @@ def detect_paths(text: str) -> List[str]:
     return re.findall(r"(?:/[^/\s\n]+)+|~/[^/\s\n]+", text)
 
 
-def is_image(path: str) -> bool:
-    ext = os.path.splitext(path)[1].lower()
-    return ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
-
-
-# --- UI Components ---
-class StreamPrinter:
-    def __init__(self, width: int, indent: str, line_color: str = Colors.MAGENTA):
-        self.width, self.indent, self.line_color = width, indent, line_color
-        self.current_line_len = 0
-        self.word_buffer = ""
-        self.is_start = True
-        self.in_thought = False
-        self.in_reasoning_block = False
-        self.glyphs = ["▰▱▱▱▱▱", "▰▰▱▱▱▱", "▰▰▰▱▱▱", "▰▰▰▰▱▱", "▰▰▰▰▰▱", "▰▰▰▰▰▰"]
-        self.glyph_idx = 0
-
-    def process_reasoning(self, text: str, status: str = "Thinking..."):
-        if not self.in_reasoning_block:
-            self.in_reasoning_block = True
-            glyph = self.glyphs[self.glyph_idx % len(self.glyphs)]
-            print(
-                f"{self.indent}{self.line_color}│{Colors.RESET} {Colors.DIM}{glyph} {status}{Colors.RESET}"
-            )
-            print(
-                f"{self.indent}{self.line_color}│{Colors.RESET} {Colors.DIM}",
-                end="",
-                flush=True,
-            )
-            self.current_line_len = 0
-            self.glyph_idx += 1
-
-        for char in text:
-            if char == "\n":
-                self.flush_word()
-                print(
-                    f"\n{self.indent}{self.line_color}│{Colors.RESET} {Colors.DIM}",
-                    end="",
-                    flush=True,
-                )
-                self.current_line_len = 0
-            else:
-                self.word_buffer += char
-                if char == " ":
-                    self.flush_word()
-
-    def process(self, text: str):
-        if self.in_reasoning_block:
-            self.flush_word()
-            print(f"{Colors.RESET}\n{self.indent}{self.line_color}│{Colors.RESET} ")
-            self.in_reasoning_block = False
-            self.current_line_len = 0
-        if self.is_start:
-            print(f"{self.indent}{self.line_color}│{Colors.RESET} ", end="", flush=True)
-            self.is_start = False
-        for char in text:
-            if char == "\n":
-                self.flush_word()
-                style = f"{Colors.DIM}{Colors.ITALIC}" if self.in_thought else ""
-                print(
-                    f"\n{self.indent}{self.line_color}│{Colors.RESET} {style}",
-                    end="",
-                    flush=True,
-                )
-                self.current_line_len = 0
-                continue
-            if char == "*":
-                self.flush_word()
-                if not self.in_thought:
-                    self.in_thought = True
-                    sys.stdout.write(f"{Colors.DIM}{Colors.ITALIC}*")
-                else:
-                    sys.stdout.write(f"*{Colors.RESET}")
-                    self.in_thought = False
-                self.current_line_len += 1
-                continue
-            self.word_buffer += char
-            if char == " ":
-                self.flush_word()
-
-    def flush_word(self):
-        if not self.word_buffer:
-            return
-        if self.current_line_len + len(self.word_buffer) > self.width - 2:
-            style = (
-                f"{Colors.DIM}{Colors.ITALIC}"
-                if (self.in_thought or self.in_reasoning_block)
-                else ""
-            )
-            print(
-                f"\n{self.indent}{self.line_color}│{Colors.RESET} {style}",
-                end="",
-                flush=True,
-            )
-            word = self.word_buffer.lstrip()
-            print(word, end="", flush=True)
-            self.current_line_len = len(word)
-        else:
-            print(self.word_buffer, end="", flush=True)
-            self.current_line_len += len(self.word_buffer)
-        self.word_buffer = ""
-
-    def finish(self):
-        self.flush_word()
-        print(
-            f"{Colors.RESET}\n{self.indent}{self.line_color}╰──────────────────────────────────────────{Colors.RESET}"
-        )
-
-
+# --- Input Engine v2 ---
 class InputHandler:
+    COMMANDS = [
+        "/model",
+        "/search",
+        "/thinking",
+        "/history",
+        "/rename",
+        "/session list",
+        "/session load",
+        "/clear",
+        "/help",
+        "/exit",
+        "/pager",
+    ]
+
     def __init__(self):
         self.fd = sys.stdin.fileno()
         self.old_settings = termios.tcgetattr(self.fd)
+        self.history: List[str] = []
+        self.hist_ptr = -1
 
     def get_key(self):
         try:
@@ -328,32 +279,37 @@ class InputHandler:
         finally:
             termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old_settings)
 
-    def wrapped_input(
-        self, prompt: str, indent: str, width: int, padding: int = 0
-    ) -> str:
-        buffer, cursor_pos, prev_lines = [], 0, 0
-        stripped_prompt = strip_ansi(prompt)
-        p_len = len(stripped_prompt)
+    def wrapped_input(self, prompt_header: str, indent: str, width: int) -> str:
+        buffer: List[str] = []
+        cursor_pos = 0
+        p_len = len(strip_ansi(prompt_header))
+        print(prompt_header, end="", flush=True)
 
-        # Lift UI
-        print("\n" * padding, end="")
-        sys.stdout.write(f"\033[{padding}A")
-        print(prompt, end="", flush=True)
-
+        prev_lines = 0
         while True:
             key = self.get_key()
+            ghost = ""
+
             if key == "\x03":
                 raise KeyboardInterrupt
             elif key == "\x04":
-                if not buffer:
-                    raise EOFError
-                break
+                raise EOFError
             elif key in ("\r", "\n"):
                 if prev_lines > 0:
                     sys.stdout.write(f"\033[{prev_lines}A")
-                sys.stdout.write("\r\033[J")
-                print(prompt + "".join(buffer))
-                break
+                sys.stdout.write("\r\033[J" + prompt_header + "".join(buffer) + "\n")
+                res = "".join(buffer)
+                if res.strip():
+                    self.history.append(res)
+                self.hist_ptr = -1
+                return res
+            elif key == "\t":
+                current_str = "".join(buffer)
+                for cmd in self.COMMANDS:
+                    if current_str.startswith("/") and cmd.startswith(current_str):
+                        buffer = list(cmd)
+                        cursor_pos = len(buffer)
+                        break
             elif key == "\x7f":
                 if cursor_pos > 0:
                     buffer.pop(cursor_pos - 1)
@@ -364,84 +320,96 @@ class InputHandler:
                     cursor_pos -= 1
                 elif seq == "[C" and cursor_pos < len(buffer):
                     cursor_pos += 1
+                elif seq == "[A":  # Up
+                    if self.history and self.hist_ptr < len(self.history) - 1:
+                        self.hist_ptr += 1
+                        buffer = list(self.history[-(self.hist_ptr + 1)])
+                        cursor_pos = len(buffer)
+                elif seq == "[B":  # Down
+                    if self.hist_ptr > 0:
+                        self.hist_ptr -= 1
+                        buffer = list(self.history[-(self.hist_ptr + 1)])
+                        cursor_pos = len(buffer)
+                    else:
+                        self.hist_ptr = -1
+                        buffer = []
+                        cursor_pos = 0
                 continue
             elif ord(key) >= 32:
                 buffer.insert(cursor_pos, key)
                 cursor_pos += 1
 
+            # Autocomplete Ghosting
+            current_str = "".join(buffer)
+            if current_str.startswith("/") and len(current_str) > 1:
+                for cmd in self.COMMANDS:
+                    if cmd.startswith(current_str):
+                        ghost = cmd[len(current_str) :]
+                        break
+
+            # Redraw
             if prev_lines > 0:
                 sys.stdout.write(f"\033[{prev_lines}A")
-            sys.stdout.write("\r\033[J" + prompt)
-            cl, lines, cur_cl, cur_col = p_len, 0, 0, p_len
+            sys.stdout.write("\r\033[J" + prompt_header)
+
+            cl, lines, cur_l, cur_c = p_len, 0, 0, p_len
             for i, char in enumerate(buffer):
                 if i == cursor_pos:
-                    cur_cl, cur_col = lines, cl
+                    cur_l, cur_c = lines, cl
                 sys.stdout.write(char)
                 cl += 1
                 if cl >= width:
                     sys.stdout.write(f"\n{indent}")
                     cl, lines = 0, lines + 1
+
+            if ghost:
+                sys.stdout.write(f"{Colors.DIM}{ghost}{Colors.RESET}")
+
             if cursor_pos == len(buffer):
-                cur_cl, cur_col = lines, cl
-            up = lines - cur_cl
+                cur_l, cur_c = lines, cl
+            up = lines - cur_l
             if up > 0:
                 sys.stdout.write(f"\033[{up}A")
-            sys.stdout.write(f"\r\033[{cur_col}C")
+            sys.stdout.write(f"\r\033[{cur_c}C")
             prev_lines = lines
             sys.stdout.flush()
-        return "".join(buffer)
 
 
-# --- System & API ---
+# --- System Stats ---
 class SystemMonitor:
     def __init__(self):
         self.last_cpu = None
-        self.history = {"bat": [], "cpu": [], "mem": []}
-
-    def get_trend(self, key, val):
-        if not self.history[key]:
-            self.history[key].append(val)
-            return ""
-        prev = self.history[key][-1]
-        self.history[key].append(val)
-        if len(self.history[key]) > 5:
-            self.history[key].pop(0)
-        return "↑" if val > prev else ("↓" if val < prev else "")
 
     def get_stats(self):
         try:
             with open("/sys/class/power_supply/BAT0/capacity") as f:
-                b_val = int(f.read().strip())
+                b = int(f.read())
             with open("/sys/class/power_supply/BAT0/status") as f:
-                b_stat = f.read().strip()
+                s = f.read().strip()
             with open("/proc/stat") as f:
                 line = f.readline()
             parts = [int(x) for x in line.split()[1:]]
             idle, total = parts[3] + parts[4], sum(parts)
-            c_val = 0
+            c = 0
             if self.last_cpu:
                 pi, pt = self.last_cpu
                 if total > pt:
-                    c_val = int(100 * (1 - (idle - pi) / (total - pt)))
+                    c = int(100 * (1 - (idle - pi) / (total - pt)))
             self.last_cpu = (idle, total)
             with open("/proc/meminfo") as f:
                 lines = f.readlines()
-            m_total, m_avail = int(lines[0].split()[1]), int(lines[2].split()[1])
-            m_val = int(100 * (m_total - m_avail) / m_total)
-            b_icon = "⚡" if b_stat == "Charging" else "🔋"
-            return (
-                f"{b_icon}{b_val}%{self.get_trend('bat', b_val)}",
-                f"CPU:{c_val}%{self.get_trend('cpu', c_val)}",
-                f"MEM:{m_val}%{self.get_trend('mem', m_val)}",
-            )
+            mt, ma = int(lines[0].split()[1]), int(lines[2].split()[1])
+            m = int(100 * (mt - ma) / mt)
+            return f"{'⚡' if s == 'Charging' else '🔋'}{b}%", f"CPU:{c}%", f"MEM:{m}%"
         except:
-            return ("Bat:?", "CPU:?", "MEM:?")
+            return "Bat:?", "CPU:?", "MEM:?"
 
-    def get_status_string(self):
+    def get_status(self):
         b, c, m = self.get_stats()
         return f"{Colors.DIM}┌──[{Colors.RESET} {b} {Colors.DIM}]──[{Colors.RESET} {c} {Colors.DIM}]──[{Colors.RESET} {m} {Colors.DIM}]──┐{Colors.RESET}"
 
 
+# --- API & Engine ---
 def chat_api_call(
     messages: List[Dict[str, Any]],
     config: Dict[str, Any],
@@ -466,35 +434,24 @@ def chat_api_call(
         m_name = model
         headers = {"Authorization": f"Bearer {key}"}
 
-    clean_msgs = []
+    clean = []
     for m in messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        if isinstance(content, list):
-            clean_msgs.append({"role": role, "content": content})
+        if isinstance(m.get("content"), list):
+            clean.append({"role": m["role"], "content": m["content"]})
         else:
-            clean_msgs.append({"role": role, "content": str(content)})
+            clean.append({"role": m["role"], "content": str(m["content"])})
 
-    payload = {"model": m_name, "messages": clean_msgs, "stream": True}
+    payload = {"model": m_name, "messages": clean, "stream": True}
     if search_enabled and "reasoner" not in m_name:
         payload["tools"] = [
             {
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "Search the web for current information.",
+                    "description": "Search the web.",
                     "parameters": {
                         "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search query",
-                            },
-                            "flash": {
-                                "type": "boolean",
-                                "description": "If true, returns top 3 results fast. If false, returns 8 results.",
-                            },
-                        },
+                        "properties": {"query": {"type": "string"}},
                         "required": ["query"],
                     },
                 },
@@ -506,6 +463,7 @@ def chat_api_call(
         payload["include_reasoning"] = True
     elif "grok" not in m_name:
         payload["temperature"] = 1.2
+
     try:
         res = requests.post(
             str(url).rstrip("/") + "/chat/completions",
@@ -521,6 +479,74 @@ def chat_api_call(
         return None
 
 
+class StreamPrinterV2:
+    def __init__(self, width: int, indent: str):
+        self.width, self.indent = width, indent
+        self.current_line_len = 0
+        self.word_buf = ""
+        self.is_start = True
+        self.is_reasoning = False
+
+    def process(self, text: str, reasoning: bool = False):
+        if reasoning and not self.is_reasoning:
+            self.is_reasoning = True
+            print(
+                f"{self.indent}{Colors.MAGENTA}│{Colors.RESET} {Colors.DIM}Thinking...{Colors.RESET}"
+            )
+            print(
+                f"{self.indent}{Colors.MAGENTA}│{Colors.RESET} {Colors.DIM}",
+                end="",
+                flush=True,
+            )
+            self.current_line_len = 0
+        elif not reasoning and self.is_reasoning:
+            self.flush()
+            print(f"{Colors.RESET}\n{self.indent}{Colors.MAGENTA}│{Colors.RESET} ")
+            self.is_reasoning, self.is_start, self.current_line_len = False, True, 0
+
+        if self.is_start:
+            prefix = f"{self.indent}{Colors.MAGENTA}│{Colors.RESET} "
+            if reasoning:
+                prefix += Colors.DIM
+            print(prefix, end="", flush=True)
+            self.is_start = False
+
+        for char in text:
+            if char == "\n":
+                self.flush()
+                prefix = f"\n{self.indent}{Colors.MAGENTA}│{Colors.RESET} "
+                if reasoning:
+                    prefix += Colors.DIM
+                print(prefix, end="", flush=True)
+                self.current_line_len = 0
+                continue
+            self.word_buf += char
+            if char == " ":
+                self.flush()
+
+    def flush(self):
+        if not self.word_buf:
+            return
+        if self.current_line_len + len(self.word_buf) > self.width - 2:
+            prefix = f"\n{self.indent}{Colors.MAGENTA}│{Colors.RESET} "
+            if self.is_reasoning:
+                prefix += Colors.DIM
+            print(prefix, end="", flush=True)
+            word = self.word_buf.lstrip()
+            print(word, end="", flush=True)
+            self.current_line_len = len(word)
+        else:
+            print(self.word_buf, end="", flush=True)
+            self.current_line_len += len(self.word_buf)
+        self.word_buf = ""
+
+    def finish(self):
+        self.flush()
+        print(
+            f"{Colors.RESET}\n{self.indent}{Colors.MAGENTA}╰──────────────────────────────────────────{Colors.RESET}"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=DEFAULT_CONFIG_FILE)
@@ -528,29 +554,44 @@ def main():
     args = parser.parse_args()
     config = load_config(args.config)
     cur_model = str(args.model or config.get("default_model", "deepseek-reasoner"))
-    mimo_thinking, search_active = config.get("mimo_thinking_enabled", True), False
-    history: List[Dict[str, Any]] = []
-    history.append({"role": "system", "content": load_system_prompt()})
+    mimo_thinking, search_active, pager_active = (
+        config.get("mimo_thinking_enabled", True),
+        False,
+        False,
+    )
+
+    # Startup Cleanup
+    if os.path.exists(SESSION_DIR):
+        for f in os.listdir(SESSION_DIR):
+            p = os.path.join(SESSION_DIR, f)
+            if os.path.isfile(p) and os.path.getsize(p) < 200:
+                try:
+                    with open(p) as f_obj:
+                        if "**Kuumin**" not in f_obj.read():
+                            os.remove(p)
+                except:
+                    pass
+
+    history: List[Dict[str, Any]] = [
+        {"role": "system", "content": load_system_prompt()}
+    ]
     session_file = f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
     save_path = os.path.join(SESSION_DIR, session_file)
     monitor, input_h = SystemMonitor(), InputHandler()
     os.system("clear")
-    print(
-        f"\n{Colors.CYAN}Mimi Cyber-TTY v4.0 (Optical & Search Uplink Enabled){Colors.RESET}"
-    )
+    print(f"\n{Colors.CYAN}Mimi Cyber-TTY Zenith v5.0{Colors.RESET}")
     print(f"{Colors.DIM}Model: {cur_model} | File: {session_file}{Colors.RESET}\n")
 
     while True:
         try:
-            width = min(get_terminal_size().columns - 20, 80)
-            indent_size = int((get_terminal_size().columns - width) / 2)
-            indent = " " * indent_size
-            print(f"{indent}{monitor.get_status_string()}")
-            prompt = f"{indent}{Colors.DIM}└─> {Colors.RESET}{Colors.HEADER_USER}KUUMIN_ {Colors.RESET}"
-            user_input = input_h.wrapped_input(prompt, indent, width, padding=5)
+            width, indent, _, _ = get_layout()
+            print(f"{indent}{monitor.get_status()}")
+            print(f"{indent}{Colors.HEADER_USER}KUUMIN ⚡{Colors.RESET}")
+            user_input = input_h.wrapped_input(f"{indent}> ", indent, width)
+
             if not user_input.strip():
                 continue
-            if user_input.lower() in ("exit", "quit"):
+            if user_input.lower() in ("exit", "quit", "/exit"):
                 break
 
             if user_input.startswith("/"):
@@ -561,31 +602,28 @@ def main():
                         print(f"{indent}Model -> {cur_model}\n")
                     else:
                         print(
-                            f"{indent}Models: deepseek-reasoner, grok, mimo, vision\n"
+                            f"{indent}Models: deepseek-reasoner, deepseek-chat, grok, mimo\n"
                         )
                 elif cmd[0] == "/search":
                     search_active = "on" in user_input
                     print(
-                        f"{indent}Search Uplink: {'ENABLED' if search_active else 'DISABLED'}\n"
+                        f"{indent}Search Uplink: {'ON' if search_active else 'OFF'}\n"
                     )
                 elif cmd[0] == "/thinking":
                     mimo_thinking = "on" in user_input
                     print(f"{indent}Mimo Thinking: {mimo_thinking}\n")
-                elif cmd[0] == "/history":
-                    for m in history:
-                        if m["role"] != "system":
-                            print_formatted(
-                                "Mimi" if m["role"] == "assistant" else "Kuumin",
-                                str(m.get("content", "")),
-                                compact=True,
-                            )
+                elif cmd[0] == "/pager":
+                    pager_active = "on" in user_input
+                    print(f"{indent}Interactive Pager: {pager_active}\n")
+                elif cmd[0] == "/clear":
+                    os.system("clear")
                 elif cmd[0] == "/session":
                     if len(cmd) > 1 and cmd[1] == "list":
                         files = sorted(
                             [f for f in os.listdir(SESSION_DIR) if f.endswith(".md")],
                             reverse=True,
                         )
-                        for i, f in enumerate(files[:10]):
+                        for i, f in enumerate(files[:15]):
                             print(f"{indent}[{i + 1}] {f}")
                     elif len(cmd) > 1 and cmd[1] == "load":
                         files = sorted(
@@ -608,17 +646,39 @@ def main():
                                 history = new_h
                                 save_path = os.path.join(SESSION_DIR, target)
                                 session_file = target
-                                print(f"{indent}Loaded {target}\n")
+                                if pager_active:
+                                    run_pager(history)
+                                else:
+                                    os.system("clear")
+                                    for m in history:
+                                        if m["role"] != "system":
+                                            print_formatted(
+                                                "Mimi"
+                                                if m["role"] == "assistant"
+                                                else "Kuumin",
+                                                str(m.get("content", "")),
+                                            )
+                elif cmd[0] == "/history":
+                    if pager_active:
+                        run_pager(history)
+                    else:
+                        for m in history:
+                            if m["role"] != "system":
+                                print_formatted(
+                                    "Mimi" if m["role"] == "assistant" else "Kuumin",
+                                    str(m.get("content", "")),
+                                )
                 continue
 
-            # Optical Scan
+            # Process Images
             paths = detect_paths(user_input)
             images = [
                 p
                 for p in paths
-                if is_image(p) and os.path.exists(os.path.expanduser(p))
+                if os.path.exists(os.path.expanduser(p))
+                and p.lower().endswith((".png", ".jpg", ".jpeg"))
             ]
-            c_payload: List[Dict[str, Any]] = [{"type": "text", "text": user_input}]
+            p_load: List[Dict[str, Any]] = [{"type": "text", "text": user_input}]
             if images:
                 print(
                     f"{indent}{Colors.YELLOW}[ SCANNING OPTICAL BUFFER... ]{Colors.RESET}"
@@ -626,7 +686,7 @@ def main():
                 for img in images:
                     b64 = encode_image(img)
                     if b64:
-                        c_payload.append(
+                        p_load.append(
                             {
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/png;base64,{b64}"},
@@ -637,14 +697,14 @@ def main():
 
             history[0]["content"] = load_system_prompt()
             history.append(
-                {"role": "user", "content": c_payload if images else user_input}
+                {"role": "user", "content": p_load if images else user_input}
             )
             autosave_turn(save_path, "Kuumin", user_input)
             log_to_jan_format(ensure_thread_dir(DEFAULT_THREAD_ID), "user", user_input)
 
             while True:
                 print(f"\n{indent}{Colors.MAGENTA}╭── MIMI ❖{Colors.RESET}")
-                printer = StreamPrinter(width, indent)
+                printer = StreamPrinterV2(width, indent)
                 response = chat_api_call(
                     history, config, cur_model, mimo_thinking, search_active
                 )
@@ -664,7 +724,7 @@ def main():
                                 "reasoning"
                             )
                             if reason:
-                                printer.process_reasoning(reason)
+                                printer.process(reason, reasoning=True)
                             if "tool_calls" in delta:
                                 for tc in delta["tool_calls"]:
                                     while len(tool_calls) <= tc["index"]:
@@ -711,7 +771,7 @@ def main():
                             print(
                                 f"{indent}{Colors.CYAN}[ ACQUIRING UPLINK: {q} ]{Colors.RESET}"
                             )
-                            res = web_search(q, args_d.get("flash", True))
+                            res = web_search(q)
                             history.append(
                                 {
                                     "role": "tool",
@@ -728,8 +788,6 @@ def main():
                         ensure_thread_dir(DEFAULT_THREAD_ID), "assistant", full_res
                     )
                     break
-            # Visual lift after Mimi speaks
-            print("\n" * 3)
         except KeyboardInterrupt:
             break
         except Exception as e:
