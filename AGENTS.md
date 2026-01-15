@@ -19,91 +19,81 @@ Mimi is structured for high portability and modularity. Avoid bloating the root 
 - `mimi_lib/utils/`: Shared helper functions for text, system info, and filesystem.
 - `data/`: Local state storage (sessions, memories, vector indexes).
 
-## 2. Environment & Data
+## 2. Development Workflow
 
-- **Local Storage**: `data/memories/` contains persistent JSON stores for memories, notes, and vectors.
-- **Obsidian Sync**: The "Vault Brain" automatically indexes the user's Obsidian vault at `~/Documents/kuumin/`.
-- **Secrets**: Use a `.env` file at the root. Never hardcode API keys.
-- **Portability**: All file paths MUST be derived from `mimi_lib.config.PROJECT_ROOT`.
+### Build & Lint
+- **Format**: `ruff format .` (Ensures Black-compatible formatting).
+- **Lint**: `ruff check .` (Catches syntax errors, unused imports, etc.).
+- **Fix**: `ruff check . --fix` (Automatically fixes common issues).
 
-## 3. Development Guidelines
+### Testing
+- **Run All Tests**: `pytest`
+- **Run Single File**: `pytest test_mimi_cli.py`
+- **Run Specific Test**: `pytest test_mimi_cli.py::TestMimiApp::test_handle_command`
+- **Manual Verification**: Run `./mimi` to ensure the TTY interface initializes correctly.
 
-### Code Style
+## 3. Code Style Guidelines
+
+### Imports
+Organize imports into three sections separated by a newline:
+1. Standard library imports (e.g., `os`, `sys`, `json`).
+2. Third-party imports (e.g., `requests`, `dotenv`, `typing`).
+3. Local project imports (e.g., `from mimi_lib.config import ...`).
+Within each group, imports should be sorted alphabetically.
+
+### Formatting & Style
 - **Indentation**: 4 spaces.
-- **Strings**: Prefer double quotes (`"`) for content, single quotes (`'`) for keys/identifiers.
-- **Naming**: 
-    - `snake_case` for functions, variables, and file names.
-    - `PascalCase` for classes.
-    - `UPPER_SNAKE_CASE` for constants in `config.py`.
-- **Type Hinting**: Required for all function signatures (PEP 484).
-- **Error Handling**: 
-    - Tools should return a string error message rather than raising exceptions that crash the TTY.
-    - Use `try...except` blocks in I/O and network operations.
+- **Line Length**: 88 characters (Black standard).
+- **Strings**: Use double quotes (`"`) for user-facing content and long strings; use single quotes (`'`) for dictionary keys and internal identifiers.
+- **Type Hinting**: Required for all function signatures and class attributes. Use `typing.List`, `typing.Dict`, `typing.Optional`, etc.
 
-### Thread Safety
-- Mimi uses a streaming architecture. When implementing tools that print to stdout, wrap the output in `with app.print_lock:` if the tool is called during a generation. However, standard tool return values are handled safely by the `MimiApp` tool executor.
+### Naming Conventions
+- **Variables & Functions**: `snake_case`.
+- **Classes**: `PascalCase`.
+- **Constants**: `UPPER_SNAKE_CASE` (defined in `mimi_lib/config.py`).
+- **File Names**: `snake_case`.
 
-### Absolute Paths
-- **Rule**: Never use relative paths like `open("../data/...")`.
-- **Fix**: Import paths from `mimi_lib.config`:
+### Error Handling
+- **Tools**: NEVER raise exceptions that propagate to the main loop. Wrap logic in `try...except` and return a descriptive error string.
+- **API/IO**: Use specific exception handling (e.g., `requests.exceptions.RequestException`) and log errors to `data/mimi_api_debug.log`.
+- **Validation**: Use `json.loads` safely within `try` blocks when processing LLM outputs.
+
+## 4. Environment & Path Management
+
+- **Absolute Paths**: Never use relative paths like `open("../data/...")`.
+- **Path Registry**: Use `mimi_lib/config.py` for all file references. Import paths like `SESSION_DIR`, `MEMORY_DIR`, or `PROJECT_ROOT`.
+- **Example**:
   ```python
-  from mimi_lib.config import MEMORY_DIR
-  target_file = MEMORY_DIR / "my_data.json"
+  from mimi_lib.config import DATA_DIR
+  config_path = DATA_DIR / "config.json"
   ```
+- **Secrets**: Store all keys in a `.env` file. Use `os.getenv` or `load_dotenv`. Never commit real keys.
 
-## 4. Extending Mimi (Adding Tools)
+## 5. Thread Safety & TTY Protocols
+
+- **Output Locking**: Mimi uses a streaming architecture. If a tool needs to print directly to the terminal, wrap it in `with app.print_lock:` to prevent interweaving with the AI's response.
+- **Non-Interactive**: Avoid using `input()` in tools. Use the `VimInput` handler if interaction is required, though most tool executions should be autonomous.
+
+## 6. Extending Mimi (Adding Tools)
 
 To add a new capability:
-1. Create a module in `mimi_lib/tools/` (e.g., `research_tools.py`).
-2. Use the `@register_tool` decorator:
-   ```python
-   from mimi_lib.tools.registry import register_tool
+1. Create a module in `mimi_lib/tools/`.
+2. Use the `@register_tool` decorator with a clear JSON schema for parameters.
+3. Import the module in `mimi_lib/app.py` or `mimi_lib/tools/__init__.py`.
+4. Ensure the tool returns a `str` or a JSON-serializable object.
 
-   @register_tool(
-       "tool_name",
-       "Clear description of what the tool does.",
-       {
-           "type": "object",
-           "properties": {
-               "arg1": {"type": "string", "description": "Arg description"}
-           },
-           "required": ["arg1"]
-       }
-   )
-   def my_tool_func(arg1: str):
-       # Logic here
-       return "Result string"
-   ```
-3. Import the module in `mimi_lib/app.py` or `mimi_lib/tools/__init__.py` to ensure registration.
+## 7. Obsidian & RAG Integration
 
-## 5. Build, Lint & Test
+- **Vault Path**: `~/Documents/kuumin/` is the source of truth for knowledge.
+- **Indexing**: `vault_indexer.py` manages the vector store.
+- **Context Injection**: Use `get_reminiscence` in `MimiApp` to provide context from the vault and session memory on every turn.
 
-### Commands
-- **Main Entry**: `./mimi` (Ensure it has `+x` permissions).
-- **Format**: `ruff format .`
-- **Lint**: `ruff check .`
-- **Test (All)**: `pytest` or `python3 -m unittest discover`
-- **Test (Single File)**: `pytest test_mimi_cli.py` or `python3 test_mimi_cli.py`
-- **Sync Vault**: `python3 -c "from mimi_lib.memory.vault_indexer import index_vault; index_vault()"`
+## 8. Operational Protocols for Agents
 
-### Test Requirements
-- New features should include a test in a new `test_*.py` file at the root or a `tests/` directory.
-- Use `unittest.mock` for any network or hardware-dependent calls.
-
-## 6. Obsidian Copilot Integration
-
-Mimi is designed to be an Obsidian copilot. 
-- **Vault Path**: Defined in `mimi_lib.config.VAULT_PATH`.
-- **Indexing**: Uses `vault_indexer.py` to create a semantic map of notes.
-- **RAG**: The `get_reminiscence` method in `MimiApp` queries the vault vector store (`vault_vectors.json`) on every turn to provide context.
-- **Manual Sync**: User can run `/vault_index` in the TTY to refresh knowledge.
-
-## 7. Operational Protocols for Agents
-
-1. **Safety First**: Before running destructive bash commands (like `rm` or `git reset`), verify the target path.
-2. **Context Awareness**: Always check `mimi_lib/config.py` first when adding new data storage requirements.
-3. **Atomic Changes**: When editing files, keep changes localized to the relevant module.
-4. **Verification**: After modifying core logic, run `python3 test_mimi_cli.py` to ensure TTY components still function.
+1. **Atomic Commits**: Group related changes (e.g., a new tool and its registration) into a single commit.
+2. **Always Push**: After successfully completing a task, staging changes, and committing, always run `git push origin main`.
+3. **Safety First**: Before running destructive commands (`rm`, `git reset --hard`), verify the path and impact.
+4. **Consistency**: Maintain the architectural boundary between `mimi_lib` (logic) and root (execution/entry).
 
 ---
 *Mimi Zenith v6.0 - Cyber-TTY System*
