@@ -1,0 +1,8 @@
+python-dotenv
+requests
+pydantic
+beautifulsoup4
+duckduckgo-search
+pypdf
+openai
+# Optional: chromadb for advanced vector search later

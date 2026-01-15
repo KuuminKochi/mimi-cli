@@ -1,0 +1,134 @@
+import os
+import json
+import hashlib
+from pathlib import Path
+from datetime import datetime
+from mimi_lib.config import VAULT_PATH, VAULT_VECTORS_FILE, VAULT_INDEX_LOG
+from mimi_lib.memory.embeddings import get_embedding, cosine_similarity
+
+
+def chunk_text(text, max_chars=1500):
+    """Simple chunking by paragraphs or sentences."""
+    paragraphs = text.split("\n\n")
+    chunks = []
+    current_chunk = ""
+
+    for p in paragraphs:
+        if len(current_chunk) + len(p) < max_chars:
+            current_chunk += p + "\n\n"
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = p + "\n\n"
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    return chunks
+
+
+def get_vault_files():
+    """Recursively find all markdown files in the vault, excluding hidden dirs."""
+    files = []
+    for root, dirs, filenames in os.walk(VAULT_PATH):
+        # Skip hidden directories like .obsidian, .git
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for f in filenames:
+            if f.endswith(".md"):
+                files.append(Path(root) / f)
+    return files
+
+
+def index_vault(force=False):
+    """Scan vault and update embeddings for new/changed files."""
+    index_log = {}
+    if VAULT_INDEX_LOG.exists():
+        try:
+            index_log = json.loads(VAULT_INDEX_LOG.read_text())
+        except:
+            pass
+
+    vectors = {}
+    if VAULT_VECTORS_FILE.exists():
+        try:
+            vectors = json.loads(VAULT_VECTORS_FILE.read_text())
+        except:
+            pass
+
+    files = get_vault_files()
+    updated_count = 0
+
+    for fpath in files:
+        rel_path = str(fpath.relative_to(VAULT_PATH))
+        mtime = fpath.stat().st_mtime
+
+        # Skip if not changed
+        if (
+            not force
+            and rel_path in index_log
+            and index_log[rel_path]["mtime"] == mtime
+        ):
+            continue
+
+        print(f"Indexing: {rel_path}")
+        try:
+            content = fpath.read_text(encoding="utf-8", errors="replace")
+            if not content.strip():
+                continue
+
+            chunks = chunk_text(content)
+            file_vectors = []
+
+            for i, chunk in enumerate(chunks):
+                # Add context (filename) to the chunk for better retrieval
+                contextual_chunk = f"File: {rel_path}\nContent: {chunk}"
+                embedding = get_embedding(contextual_chunk)
+                if embedding:
+                    file_vectors.append(
+                        {"chunk_index": i, "text": chunk, "embedding": embedding}
+                    )
+
+            if file_vectors:
+                vectors[rel_path] = file_vectors
+                index_log[rel_path] = {
+                    "mtime": mtime,
+                    "indexed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                }
+                updated_count += 1
+
+            # Periodically save progress every 5 files
+            if updated_count % 5 == 0:
+                VAULT_VECTORS_FILE.write_text(json.dumps(vectors))
+                VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
+
+        except Exception as e:
+            print(f"Failed to index {rel_path}: {e}")
+
+    if updated_count > 0:
+        VAULT_VECTORS_FILE.write_text(json.dumps(vectors))
+        VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
+
+    return f"Indexed {updated_count} new/updated files. Total files in index: {len(index_log)}"
+
+
+def search_vault(query, top_k=5):
+    """Semantic search across the vault vectors."""
+    query_vector = get_embedding(query)
+    if not query_vector or not VAULT_VECTORS_FILE.exists():
+        return []
+
+    try:
+        vectors = json.loads(VAULT_VECTORS_FILE.read_text())
+    except:
+        return []
+
+    results = []
+    for rel_path, chunks in vectors.items():
+        for chunk_data in chunks:
+            sim = cosine_similarity(query_vector, chunk_data["embedding"])
+            if sim > 0.4:  # Similarity threshold
+                results.append(
+                    {"score": sim, "path": rel_path, "text": chunk_data["text"]}
+                )
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]

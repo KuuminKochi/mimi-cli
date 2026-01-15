@@ -1,10 +1,13 @@
 {
-  "api_key": "YOUR_DEEPSEEK_API_KEY",
-  "openrouter_api_key": "YOUR_OPENROUTER_API_KEY",
-  "xai_api_key": "YOUR_XAI_API_KEY",
+  "api_key": "your_deepseek_api_key_here",
+  "openrouter_api_key": "your_openrouter_api_key_here",
+  "xai_api_key": "your_xai_api_key_here",
   "base_url": "https://api.deepseek.com/v1",
   "openrouter_base_url": "https://openrouter.ai/api/v1",
   "xai_base_url": "https://api.x.ai/v1",
   "default_model": "deepseek-reasoner",
-  "mimo_thinking_enabled": true
+  "reasoner_model": "deepseek-reasoner",
+  "mimo_thinking_enabled": true,
+  "margin_percent": 25,
+  "margin_percent_tty": 20
 }

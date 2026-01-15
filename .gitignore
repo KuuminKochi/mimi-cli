@@ -1,15 +1,28 @@
-# API Config
+# API Config and Secrets
 deepseek_config.json
+.env
 *.json
 !config.json.example
+!mimi_lib/tools/vision_tools.json
+!mimi_lib/tools/web_tools.json
 
-# Session Data
+# Session and Local Data
 Sessions/
-mimi_memory.log
+data/
+migration/
+*.bak
+*.log
+user-log.txt
+serve.txt
 
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Binaries
+mimimemory
 
 # OS
 .DS_Store

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Ensure Script directory is in python path or accessible
-SCRIPT_DIR="/home/kuumin/Script"
+# Ensure current directory is where we look for scripts
+SCRIPT_DIR="/home/kuumin/Projects/mimi-cli"
 WATCHER_SCRIPT="$SCRIPT_DIR/mimi_memory_watcher.py"
 CLI_SCRIPT="$SCRIPT_DIR/mimi_cli.py"
 
