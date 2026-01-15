@@ -25,6 +25,7 @@ import mimi_lib.tools.web_tools
 import mimi_lib.tools.memory_tools
 import mimi_lib.tools.note_tools
 import mimi_lib.tools.vision_tools
+import mimi_lib.tools.git_tools
 from mimi_lib.tools.registry import get_tool_definitions, execute_tool
 
 from mimi_lib.ui.session import SessionSelector
