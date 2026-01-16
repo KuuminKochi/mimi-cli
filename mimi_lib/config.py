@@ -21,6 +21,7 @@ VAULT_INDEX_LOG = MEMORY_DIR / "vault_index_log.json"
 PERSONA_CORE_FILE = MEMORY_DIR / "persona_core.json"
 DIARY_STORE_FILE = MEMORY_DIR / "diary_store.json"
 NOTES_STORE_FILE = MEMORY_DIR / "notes_store.json"
+WORKING_SET_FILE = MEMORY_DIR / "working_set.json"
 PROCESSED_LOG = MEMORY_DIR / "processed_ids.json"
 COUNTER_FILE = MEMORY_DIR / "msg_counter.json"
 
@@ -30,6 +31,7 @@ VAULT_PROMPT_FILE = Path.home() / "Documents/kuumin/Mimi/SystemPrompt.md"
 
 # Vault Integration
 VAULT_PATH = Path.home() / "Documents/kuumin"
+VAULT_SESSION_DIR = VAULT_PATH / "Mimi/Sessions"
 OBSIDIAN_MEMORY_FILE = VAULT_PATH / "Mimi/LongTermMemory.md"
 OBSIDIAN_DIARY_FILE = VAULT_PATH / "Mimi/Diary.md"
 OBSIDIAN_NOTES_FILE = VAULT_PATH / "Mimi/Notes.md"

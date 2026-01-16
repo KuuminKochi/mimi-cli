@@ -8,13 +8,15 @@ import textwrap
 from datetime import datetime
 
 from typing import List, Dict, Any, Optional
+from pathlib import Path
 
-from mimi_lib.config import SESSION_DIR, get_config
+from mimi_lib.config import SESSION_DIR, WORKING_SET_FILE, VAULT_PATH, get_config
 from mimi_lib.ui.ansi import clear_screen
 from mimi_lib.ui.input import VimInput
 from mimi_lib.ui.printer import StreamPrinter
+from mimi_lib.ui.pager import Pager
 from mimi_lib.utils.text import Colors, get_layout, visible_len, visible_wrap
-from mimi_lib.memory.brain import load_system_prompt, save_memory
+from mimi_lib.memory.brain import load_system_prompt, save_memory, load_json, save_json
 from mimi_lib.memory.embeddings import semantic_search
 from mimi_lib.api.provider import call_api
 from mimi_lib.utils.system import get_sys_info
@@ -26,9 +28,16 @@ import mimi_lib.tools.memory_tools
 import mimi_lib.tools.note_tools
 import mimi_lib.tools.vision_tools
 import mimi_lib.tools.git_tools
+import mimi_lib.tools.skill_tools
+import mimi_lib.tools.research_tools
 from mimi_lib.tools.registry import get_tool_definitions, execute_tool
+from mimi_lib.tools.skill_tools import get_current_skill_content, get_active_skill_name
+from mimi_lib.tools.git_tools import sync_vault
 
 from mimi_lib.ui.session import SessionSelector
+
+# Define Vault Session Directory here if not yet in config
+VAULT_SESSION_DIR = VAULT_PATH / "Mimi/Sessions"
 
 
 class MimiApp:
@@ -41,8 +50,92 @@ class MimiApp:
         self.autorename = True
         self.session_file = f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
         self.save_path = SESSION_DIR / self.session_file
+
+        # Vault Sync setup
+        if not VAULT_SESSION_DIR.exists():
+            VAULT_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        self.vault_save_path = VAULT_SESSION_DIR / self.session_file
+
         self.input_handler = VimInput()
         self.print_lock = threading.Lock()
+        self.session_chronicle = ""
+        self.pending_summary_update = None  # (summary, count)
+        self.is_summarizing = False  # Lock to prevent storms
+        self.working_set = self._load_working_set()
+
+        # Git Sync Logic
+        self.msg_counter = 0
+        self.sync_interval = 10
+
+        # Populate working set with initial task if empty
+        if not self.working_set:
+            self._update_working_set(
+                [
+                    "mimi_lib/app.py",
+                    "mimi_lib/memory/brain.py",
+                    "data/system_prompt.md",
+                ],
+                context="Implementing Zenith Working Memory & Toolcall Pruning",
+            )
+
+    def _load_working_set(self) -> Dict[str, Any]:
+        return load_json(WORKING_SET_FILE, default={})
+
+    def _save_working_set(self):
+        save_json(WORKING_SET_FILE, self.working_set)
+
+    def _update_working_set(self, paths: List[str] = None, context: str = None):
+        """Updates the working set with new paths or task context."""
+        changed = False
+        if context:
+            self.working_set["current_task"] = context
+            changed = True
+
+        if paths:
+            if "files" not in self.working_set:
+                self.working_set["files"] = {}
+
+            for p in paths:
+                # Normalize path
+                p_str = (
+                    str(p)
+                    .replace(
+                        str(
+                            self.config["PROJECT_ROOT"]
+                            if "PROJECT_ROOT" in self.config
+                            else ""
+                        ),
+                        "",
+                    )
+                    .strip("/")
+                )
+                # Simple timestamp for LRU-like behavior
+                self.working_set["files"][p_str] = int(datetime.now().timestamp())
+                changed = True
+
+        if changed:
+            self._save_working_set()
+
+    def _get_working_set_context(self) -> str:
+        """Formats the working set for the system prompt."""
+        ws = self.working_set
+        if not ws:
+            return ""
+
+        ctx = "\n\n**Active Context (Working Set):**\n"
+        if "current_task" in ws:
+            ctx += f"Current Task: {ws['current_task']}\n"
+
+        if "files" in ws and ws["files"]:
+            # Sort by recent access
+            sorted_files = sorted(
+                ws["files"].items(), key=lambda x: x[1], reverse=True
+            )[:10]
+            ctx += "Active Files:\n"
+            for f, _ in sorted_files:
+                ctx += f"- {f}\n"
+
+        return ctx
 
     def run(self):
         clear_screen()
@@ -57,6 +150,17 @@ class MimiApp:
             width, indent, _, _ = get_layout(self.config)
             print(f"\n{indent}{self.get_status_bar()}")
             print(f"{indent}{Colors.GREEN}[USER: Kuumin]{Colors.RESET}")
+
+            # Apply pending summary updates safely in main thread
+            if self.pending_summary_update:
+                summary, count = self.pending_summary_update
+                self.session_chronicle += f"\n- {summary}"
+                # Prune history safely (Keep system [0], remove [1:count+1], keep rest)
+                self.history = [self.history[0]] + self.history[count + 1 :]
+                self.pending_summary_update = None
+                with self.print_lock:
+                    print(f"{indent}{Colors.DIM}[Memory Compacted]{Colors.RESET}")
+
             user_input = self.input_handler.get_input(
                 f"{indent}> ",
                 indent,
@@ -71,24 +175,121 @@ class MimiApp:
                 if self.handle_command(user_input, indent):
                     continue
                 else:
+                    self._check_sync_trigger(force=True)
                     break
 
             # RAG / Reminiscence
             reminiscence = self.get_reminiscence(user_input)
-            self.history[0]["content"] = load_system_prompt() + "\n" + reminiscence
+
+            # Context Composition
+            system_msg = load_system_prompt()
+
+            # Inject Working Set (Dynamic Context)
+            ws_context = self._get_working_set_context()
+            if ws_context:
+                system_msg += ws_context
+
+            # Inject Skill
+            skill_content = get_current_skill_content()
+            if skill_content:
+                system_msg += skill_content
+
+            if self.session_chronicle:
+                system_msg += (
+                    f"\n\n**Chronicle (Previous Context):**\n{self.session_chronicle}"
+                )
+
+            if reminiscence:
+                system_msg += f"\n{reminiscence}"
+
+            self.history[0]["content"] = system_msg
 
             self.history.append({"role": "user", "content": user_input})
             self.autosave("Kuumin", user_input)
 
+            # Recursive Summary Check
+            if len(self.history) > 80 and not self.is_summarizing:
+                threading.Thread(target=self._summarize_history, daemon=True).start()
+
             self.generate_response(width, indent)
+
+            # Check for Git Sync Trigger
+            self.msg_counter += 1
+            self._check_sync_trigger()
+
+    def _check_sync_trigger(self, force: bool = False):
+        if force or (
+            self.msg_counter > 0 and self.msg_counter % self.sync_interval == 0
+        ):
+            threading.Thread(
+                target=self._run_background_sync,
+                args=(f"Auto-sync session {self.session_file}",),
+                daemon=True,
+            ).start()
+
+    def _run_background_sync(self, msg: str):
+        # Quiet sync
+        sync_vault(msg)
+
+    def _summarize_history(self):
+        """Compresses old history into the session chronicle."""
+        if self.is_summarizing:
+            return
+        self.is_summarizing = True
+        try:
+            # Select messages to compress (Skip system [0], take next 40)
+            to_compress = self.history[1:41]
+            if not to_compress:
+                return
+
+            # Format for LLM
+            block = ""
+            for m in to_compress:
+                role = m["role"]
+                content = m.get("content", "") or "[Tool Output]"
+                block += f"{role}: {content[:500]}\n"
+
+            # Notify User
+            width, indent, _, _ = get_layout(self.config)
+            with self.print_lock:
+                print(
+                    f"{indent}{Colors.MAGENTA}✿ I'm compressing my memory to stay fast! 🧠{Colors.RESET}"
+                )
+
+            # Call Fast LLM
+            prompt = f"Summarize these early conversation turns into a concise narrative paragraph. Preserve key facts and decisions.\n\n{block}"
+            res = call_api(
+                [{"role": "user", "content": prompt}],
+                model="deepseek-chat",
+                stream=False,
+            )
+
+            if res and res.status_code == 200:
+                summary = res.json()["choices"][0]["message"]["content"]
+                # Store update for main thread
+                self.pending_summary_update = (summary, len(to_compress))
+
+        except Exception as e:
+            # Print error for debugging
+            with self.print_lock:
+                print(
+                    f"{Colors.RED}[DEBUG] Memory Compression Failed: {e}{Colors.RESET}"
+                )
+        finally:
+            self.is_summarizing = False
 
     def get_status_bar(self):
         now = datetime.now().strftime("%H:%M")
         s_text = "[W:ON]" if self.search_active else "[W:OFF]"
         t_text = "[T:ON]" if self.thinking_mode else "[T:OFF]"
+
+        # Skill Indicator
+        active_skill = get_active_skill_name()
+        skill_text = f"[SKILL: {active_skill.upper()}]" if active_skill else ""
+
         sys = get_sys_info()
         return (
-            f"{Colors.CYAN}[{now}]{Colors.RESET} {s_text} {t_text} | "
+            f"{Colors.CYAN}[{now}]{Colors.RESET} {s_text} {t_text} {Colors.YELLOW}{skill_text}{Colors.RESET} | "
             f"BAT: {sys['bat']} | CPU: {sys['cpu']} | MEM: {sys['mem']} | WIFI: {sys['wifi']} | "
             f"{Colors.GREEN}SYS: ONLINE{Colors.RESET}"
         )
@@ -179,6 +380,7 @@ class MimiApp:
                     self.history = new_h
                     self.session_file = selected
                     self.save_path = SESSION_DIR / selected
+                    self.vault_save_path = VAULT_SESSION_DIR / selected
                     self.run_pager()
             clear_screen()
         elif cmd[0] == "/history":
@@ -198,6 +400,7 @@ class MimiApp:
                 f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
             )
             self.save_path = SESSION_DIR / self.session_file
+            self.vault_save_path = VAULT_SESSION_DIR / self.session_file
             self.history = [{"role": "system", "content": load_system_prompt()}]
             clear_screen()
             print(
@@ -215,81 +418,9 @@ class MimiApp:
         return True
 
     def run_pager(self):
-        # Implementation of the pager for history viewing
-        import tty, termios
-
-        width, indent, _, rows = get_layout(self.config)
-        all_lines = []
-        for m in self.history:
-            role = m["role"]
-            if role == "system":
-                continue
-
-            # Label based on role
-            if role == "user":
-                label, color = "[Kuumin]", Colors.GREEN
-            elif role == "assistant":
-                label, color = "[Mimi]", Colors.MAGENTA
-            elif role == "tool":
-                label, color = f"[TOOL: {m.get('name', '???')}]", Colors.CYAN
-            else:
-                label, color = f"[{role.upper()}]", Colors.DIM
-
-            all_lines.append(f"{indent}{color}{label}{Colors.RESET}")
-
-            # Content handling (None/Empty checks)
-            content = m.get("content") or ""
-            if not content and role == "assistant" and "tool_calls" in m:
-                # Assistant message with no text content (just tool calls)
-                tool_calls = m.get("tool_calls", [])
-                t_names = ", ".join(
-                    [
-                        tc["function"]["name"]
-                        for tc in tool_calls
-                        if isinstance(tc, dict)
-                    ]
-                )
-                content = f"*Executing: {t_names}*"
-
-            if content:
-                for wrapped in visible_wrap(content, width - 4):
-                    all_lines.append(f"{indent}  {wrapped}")
-            all_lines.append("")
-
-        ptr = max(0, len(all_lines) - (rows - 6))
-        while True:
-            clear_screen()
-            border_top = f"┌──[ History ]{'─' * (width - 13)}┐"
-            print(f"{indent}{Colors.CYAN}{border_top}{Colors.RESET}")
-
-            # Display lines
-            display_count = rows - 6
-            for i in range(ptr, min(ptr + display_count, len(all_lines))):
-                print(all_lines[i])
-
-            # Fill empty lines if necessary
-            for _ in range(max(0, display_count - (len(all_lines) - ptr))):
-                print()
-
-            border_bot = f"└{'─' * (width - 2)}┘"
-            print(f"{indent}{Colors.CYAN}{border_bot}{Colors.RESET}")
-            print(f"{indent}{Colors.DIM}[UP/DOWN] scroll | [Q] exit{Colors.RESET}")
-
-            fd = sys.stdin.fileno()
-            old = termios.tcgetattr(fd)
-            try:
-                tty.setraw(fd)
-                ch = sys.stdin.read(1)
-                if ch == "q":
-                    break
-                elif ch == "\x1b":
-                    seq = sys.stdin.read(2)
-                    if seq == "[A":
-                        ptr = max(0, ptr - 1)
-                    elif seq == "[B":
-                        ptr = min(max(0, len(all_lines) - display_count), ptr + 1)
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        # Implementation of the new interactive pager
+        pager = Pager(self.history, self.config)
+        pager.run()
 
     def check_autorename(self):
         if not self.autorename:
@@ -349,24 +480,64 @@ class MimiApp:
                 old_path = self.save_path
                 new_path = SESSION_DIR / new_name
 
+                old_vault_path = self.vault_save_path
+                new_vault_path = VAULT_SESSION_DIR / new_name
+
                 if old_path.exists() and not new_path.exists():
                     os.rename(old_path, new_path)
                     self.session_file = new_name
                     self.save_path = new_path
+                    self.vault_save_path = new_vault_path  # Update vault path reference
+
+                    # Also rename vault file if it exists
+                    if old_vault_path.exists():
+                        os.rename(old_vault_path, new_vault_path)
+
                     with self.print_lock:
                         print(
                             f"\n{Colors.DIM}[ RENAMED session to: {new_name} ]{Colors.RESET}"
                         )
+
+                    # Trigger a sync after rename
+                    self._check_sync_trigger(force=True)
+
         except Exception as e:
             pass  # Fail silently for auto-rename
 
     def generate_response(self, width, indent):
+        # Skill Heuristic Check
+        messages_to_send = list(self.history)
+        active_skill = get_active_skill_name()
+        if not active_skill and self.history and self.history[-1]["role"] == "user":
+            content = self.history[-1]["content"].lower()
+            triggers = {
+                "software_architect": [
+                    "refactor",
+                    "code",
+                    "class",
+                    "function",
+                    "api",
+                    "impl",
+                    "bug",
+                    "fix",
+                ],
+                "researcher": ["research", "find", "search", "investigate", "summary"],
+                "cli_wizard": ["bash", "linux", "terminal", "script", "install", "env"],
+                "obsidian_expert": ["vault", "note", "obsidian", "link", "markdown"],
+            }
+            suggestions = [
+                s for s, kws in triggers.items() if any(kw in content for kw in kws)
+            ]
+            if suggestions:
+                hint = f"Internal Hint: The user's request likely involves {', '.join(suggestions)}. Consider using 'load_skill' if you need specialized expertise."
+                messages_to_send.append({"role": "system", "content": hint})
+
         while True:
             printer = StreamPrinter(width, indent, "Mimi")
             tools = get_tool_definitions()
 
             response = call_api(
-                self.history, model=self.cur_model, stream=True, tools=tools
+                messages_to_send, model=self.cur_model, stream=True, tools=tools
             )
             if not response:
                 break
@@ -432,14 +603,15 @@ class MimiApp:
 
             if tool_calls:
                 # Add assistant tool call to history
-                self.history.append(
-                    {
-                        "role": "assistant",
-                        "content": full_res or None,
-                        "tool_calls": tool_calls,
-                        "reasoning_content": full_reasoning if full_reasoning else None,
-                    }
-                )
+                # NOTE: We must add to both self.history (persistence) and messages_to_send (loop context)
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": full_res or None,
+                    "tool_calls": tool_calls,
+                    "reasoning_content": full_reasoning if full_reasoning else None,
+                }
+                self.history.append(assistant_msg)
+                messages_to_send.append(assistant_msg)
 
                 # Execute tools in parallel
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -450,6 +622,7 @@ class MimiApp:
                     for future in concurrent.futures.as_completed(futures):
                         result = future.result()
                         self.history.append(result)
+                        messages_to_send.append(result)
                 continue  # Generate follow-up response after tool results
             else:
                 self.history.append({"role": "assistant", "content": full_res})
@@ -460,18 +633,97 @@ class MimiApp:
     def run_tool(self, tc, indent):
         name = tc["function"]["name"]
         args = tc["function"]["arguments"]
-        with self.print_lock:
-            print(f"{indent}{Colors.CYAN}[ TOOL: {name} ]{Colors.RESET}")
 
-        content = execute_tool(name, args)
-        return {
-            "role": "tool",
-            "tool_call_id": tc["id"],
-            "name": name,
-            "content": str(content),
+        # Sniff paths for Working Set
+        try:
+            arg_data = json.loads(args)
+            paths_found = []
+            for key in ["path", "filePath", "file_path"]:
+                if key in arg_data:
+                    paths_found.append(arg_data[key])
+            if "paths" in arg_data and isinstance(arg_data["paths"], list):
+                paths_found.extend(arg_data["paths"])
+
+            if paths_found:
+                self._update_working_set(paths_found)
+        except:
+            pass
+
+        # Mimi Personality Mapping for Tools
+        personality_map = {
+            "web_search": "I'm going online to find some answers for us! 🌐",
+            "web_batch_search": "Searching a few places at once to be extra thorough! 🚀",
+            "web_fetch": "Reading this page carefully to see what I can find! 📖",
+            "vault_search": "Let me look through my memories for a second... 🔍",
+            "vault_index": "Organizing my thoughts and updating my knowledge! 🧠",
+            "vault_query": "Digging through our notes for you! 📂",
+            "add_memory": "I'll make sure to remember this! ✿",
+            "delete_memory": "Removing that from my memory bank... ⌫",
+            "search_memory": "Thinking back to our past conversations... 💭",
+            "add_note": "Writing a quick note so we don't forget! ✍️",
+            "delete_note": "Ticking that off our list! ✅",
+            "read_file": "Let me take a look at this file... 📄",
+            "write_file": "Writing this down for you! 🖊️",
+            "edit_file": "Just making a quick adjustment here! 🛠️",
+            "list_directory": "Checking what's inside this folder... 📁",
+            "search_files": "Looking for that specific file... 🔎",
+            "get_codebase_index": "Getting a bird's eye view of the code! 🗺️",
+            "sync_vault": "Syncing our vault with GitHub to keep everything safe! ☁️",
+            "check_git_status": "Checking the status of our repository... 🌿",
+            "describe_image": "Taking a look at this image... 👁️",
+            "load_skill": "Putting on my expert hat! 🧢",
+            "unload_skill": "Taking off the expert hat, just being me again! 🎀",
+            "list_skills": "Checking what skills I can learn... 📚",
+            "deep_research": "Putting on my detective coat! 🕵️‍♀️",
+            "list_signed_files": "Let me see which files I've worked on... ✿",
         }
 
+        cute_msg = personality_map.get(name, "Using a tool to help you out! ✿")
+
+        with self.print_lock:
+            print(
+                f"{indent}{Colors.MAGENTA}✿ {cute_msg}{Colors.RESET} {Colors.DIM}[{name}]{Colors.RESET}"
+            )
+
+        try:
+            content = execute_tool(name, args)
+
+            # Show error in red if tool execution failed
+            if str(content).startswith("Error"):
+                with self.print_lock:
+                    print(f"{indent}{Colors.RED}!! Oh no! {content}{Colors.RESET}")
+
+            return {
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "name": name,
+                "content": str(content),
+            }
+        except Exception as e:
+            # Absolute fallback to prevent thread crash
+            err_msg = f"Error: Unexpected crash in tool runner: {e}"
+            with self.print_lock:
+                print(f"{indent}{Colors.RED}!! Critical Error: {err_msg}{Colors.RESET}")
+            return {
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "name": name,
+                "content": err_msg,
+            }
+
     def get_reminiscence(self, user_input):
+        # Intent Detection: Skip RAG for short/trivial inputs
+        if len(user_input.split()) < 3 and user_input.lower() in [
+            "hi",
+            "hello",
+            "ok",
+            "okay",
+            "thanks",
+            "yes",
+            "no",
+        ]:
+            return ""
+
         from mimi_lib.memory.brain import get_literal_matches
         from mimi_lib.memory.vault_indexer import search_vault
 
@@ -518,12 +770,26 @@ class MimiApp:
         return rem if found else ""
 
     def autosave(self, role, content):
+        # 1. Save to Local Session Dir
         with open(self.save_path, "a", encoding="utf-8") as f:
             if f.tell() == 0:
                 f.write(
                     f"# Mimi Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
                 )
             f.write(f"**{role}** ({datetime.now().strftime('%H:%M')}):\n{content}\n\n")
+
+        # 2. Save to Obsidian Vault
+        try:
+            with open(self.vault_save_path, "a", encoding="utf-8") as f:
+                if f.tell() == 0:
+                    f.write(
+                        f"# Mimi Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                    )
+                f.write(
+                    f"**{role}** ({datetime.now().strftime('%H:%M')}):\n{content}\n\n"
+                )
+        except Exception:
+            pass  # Fail silently for vault sync if path invalid
 
 
 if __name__ == "__main__":
