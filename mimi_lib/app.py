@@ -30,6 +30,7 @@ import mimi_lib.tools.vision_tools
 import mimi_lib.tools.git_tools
 import mimi_lib.tools.skill_tools
 import mimi_lib.tools.research_tools
+import mimi_lib.tools.bash_tools
 from mimi_lib.tools.registry import get_tool_definitions, execute_tool
 from mimi_lib.tools.skill_tools import get_current_skill_content, get_active_skill_name
 from mimi_lib.tools.git_tools import sync_vault
@@ -367,10 +368,10 @@ class MimiApp:
                 self.autorename = not self.autorename
             print(f"{indent}Auto-rename: {'ON' if self.autorename else 'OFF'}")
         elif cmd[0] == "/vault_index":
-            from mimi_lib.memory.vault_indexer import index_vault
+            from mimi_lib.memory.vault_indexer import trigger_background_index
 
             print(f"{indent}Syncing vault knowledge... (This runs in background)")
-            threading.Thread(target=index_vault, daemon=True).start()
+            trigger_background_index()
         elif cmd[0].startswith("/session"):
             selector = SessionSelector(SESSION_DIR)
             selected = selector.select_session()
@@ -523,6 +524,15 @@ class MimiApp:
                 ],
                 "researcher": ["research", "find", "search", "investigate", "summary"],
                 "cli_wizard": ["bash", "linux", "terminal", "script", "install", "env"],
+                "git_master": [
+                    "git",
+                    "sync",
+                    "push",
+                    "pull",
+                    "commit",
+                    "branch",
+                    "conflict",
+                ],
                 "obsidian_expert": ["vault", "note", "obsidian", "link", "markdown"],
             }
             suggestions = [
@@ -676,6 +686,7 @@ class MimiApp:
             "list_skills": "Checking what skills I can learn... 📚",
             "deep_research": "Putting on my detective coat! 🕵️‍♀️",
             "list_signed_files": "Let me see which files I've worked on... ✿",
+            "bash": "Executing a command in the terminal! 💻",
         }
 
         cute_msg = personality_map.get(name, "Using a tool to help you out! ✿")
@@ -692,6 +703,13 @@ class MimiApp:
             if str(content).startswith("Error"):
                 with self.print_lock:
                     print(f"{indent}{Colors.RED}!! Oh no! {content}{Colors.RESET}")
+
+                # Special Hint for Git/Sync Issues
+                if (
+                    name in ["sync_vault", "check_git_status"]
+                    or "git" in str(content).lower()
+                ):
+                    content = f"{content}\n\n[Mimi System Hint: Sync/Git failure detected. Consider loading 'git_master' skill to resolve this with local priority.]"
 
             return {
                 "role": "tool",

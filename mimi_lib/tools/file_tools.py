@@ -38,9 +38,9 @@ def _trigger_sync(path: str):
         abs_path = os.path.abspath(os.path.expanduser(path))
         vault_abs = os.path.abspath(os.path.expanduser(str(VAULT_PATH)))
         if abs_path.startswith(vault_abs):
-            from mimi_lib.memory.vault_indexer import index_vault
+            from mimi_lib.memory.vault_indexer import trigger_background_index
 
-            threading.Thread(target=index_vault, args=(False,), daemon=True).start()
+            trigger_background_index()
     except:
         pass
 

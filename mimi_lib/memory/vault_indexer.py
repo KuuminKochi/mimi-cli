@@ -1,10 +1,18 @@
 import os
 import json
-import hashlib
+import threading
+import time
 from pathlib import Path
 from datetime import datetime
 from mimi_lib.config import VAULT_PATH, VAULT_VECTORS_FILE, VAULT_INDEX_LOG
 from mimi_lib.memory.embeddings import get_embedding, cosine_similarity
+
+# Global Lock to prevent multiple indexers running at once
+_INDEX_LOCK = threading.Lock()
+# Flag to indicate if an indexing run is currently active
+_IS_INDEXING = False
+# Flag to indicate if another run was requested while one was active
+_RERUN_REQUESTED = False
 
 
 def chunk_text(text, max_chars=1500):
@@ -40,8 +48,8 @@ def get_vault_files():
     return files
 
 
-def index_vault(force=False):
-    """Scan vault and update embeddings for new/changed files."""
+def _run_indexing_logic(force=False):
+    """Internal function that performs the actual indexing logic (synchronous)."""
     index_log = {}
     if VAULT_INDEX_LOG.exists():
         try:
@@ -119,6 +127,55 @@ def index_vault(force=False):
         VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
 
     return f"Indexed {updated_count} new/updated files. Total files in index: {len(index_log)}"
+
+
+def _indexer_worker(force=False):
+    """Worker thread that keeps running as long as reruns are requested."""
+    global _IS_INDEXING, _RERUN_REQUESTED
+
+    while True:
+        try:
+            _run_indexing_logic(force)
+        except Exception as e:
+            print(f"Indexer crashed: {e}")
+
+        # Check if a rerun was requested while we were working
+        with _INDEX_LOCK:
+            if not _RERUN_REQUESTED:
+                _IS_INDEXING = False
+                break
+            # Reset flag and loop again
+            _RERUN_REQUESTED = False
+            print("Processing queued index request...")
+            # We don't break, so the loop repeats
+
+
+def trigger_background_index(force=False):
+    """
+    Thread-safe non-blocking trigger for vault indexing.
+    If an indexer is already running, queues a rerun after it finishes.
+    """
+    global _IS_INDEXING, _RERUN_REQUESTED
+
+    with _INDEX_LOCK:
+        if _IS_INDEXING:
+            _RERUN_REQUESTED = True
+            return "Indexing queued (another process is active)."
+
+        _IS_INDEXING = True
+        threading.Thread(target=_indexer_worker, args=(force,), daemon=True).start()
+        return "Background indexing started."
+
+
+def index_vault(force=False):
+    """
+    Public API: triggers indexing and waits for result (or returns status message).
+    kept for backward compatibility with direct calls, but operates async now
+    or logic could be adapted if synchronous behavior is strictly required by some caller.
+
+    For now, we map this to trigger_background_index to enforce safety everywhere.
+    """
+    return trigger_background_index(force)
 
 
 def search_vault(query, top_k=5):
