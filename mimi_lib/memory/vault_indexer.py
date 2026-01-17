@@ -33,6 +33,8 @@ def get_vault_files():
         # Skip hidden directories like .obsidian, .git
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for f in filenames:
+            if f.startswith("."):
+                continue
             if f.endswith(".md"):
                 files.append(Path(root) / f)
     return files
@@ -73,6 +75,15 @@ def index_vault(force=False):
         try:
             content = fpath.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
+                # Update log for empty files to prevent re-indexing loop
+                index_log[rel_path] = {
+                    "mtime": mtime,
+                    "indexed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                }
+                # Remove from vectors if it exists (file became empty)
+                if rel_path in vectors:
+                    del vectors[rel_path]
+                updated_count += 1
                 continue
 
             chunks = chunk_text(content)

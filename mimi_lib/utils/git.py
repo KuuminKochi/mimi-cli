@@ -42,10 +42,15 @@ def git_status(cwd: str) -> Tuple[bool, str]:
 
 
 def git_pull(
-    cwd: str, remote: str = "origin", branch: str = "main"
+    cwd: str, remote: Optional[str] = "origin", branch: Optional[str] = "main"
 ) -> Tuple[bool, str]:
-    """Executes 'git pull <remote> <branch>'."""
-    return run_git_cmd(["pull", remote, branch], cwd=cwd)
+    """Executes 'git pull <remote> <branch>'. If remote/branch are None, runs standard 'git pull'."""
+    cmd = ["pull"]
+    if remote:
+        cmd.append(remote)
+        if branch:
+            cmd.append(branch)
+    return run_git_cmd(cmd, cwd=cwd)
 
 
 def git_add(cwd: str, files: str = ".") -> Tuple[bool, str]:
