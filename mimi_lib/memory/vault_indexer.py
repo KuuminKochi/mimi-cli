@@ -48,7 +48,7 @@ def get_vault_files():
     return files
 
 
-def _run_indexing_logic(force=False):
+def _run_indexing_logic(force=False, silent=True):
     """Internal function that performs the actual indexing logic (synchronous)."""
     index_log = {}
     if VAULT_INDEX_LOG.exists():
@@ -79,7 +79,8 @@ def _run_indexing_logic(force=False):
         ):
             continue
 
-        print(f"Indexing: {rel_path}")
+        if not silent:
+            print(f"Indexing: {rel_path}")
         try:
             content = fpath.read_text(encoding="utf-8", errors="replace")
             if not content.strip():
@@ -120,7 +121,8 @@ def _run_indexing_logic(force=False):
                 VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
 
         except Exception as e:
-            print(f"Failed to index {rel_path}: {e}")
+            if not silent:
+                print(f"Failed to index {rel_path}: {e}")
 
     if updated_count > 0:
         VAULT_VECTORS_FILE.write_text(json.dumps(vectors))
@@ -129,15 +131,16 @@ def _run_indexing_logic(force=False):
     return f"Indexed {updated_count} new/updated files. Total files in index: {len(index_log)}"
 
 
-def _indexer_worker(force=False):
+def _indexer_worker(force=False, silent=True):
     """Worker thread that keeps running as long as reruns are requested."""
     global _IS_INDEXING, _RERUN_REQUESTED
 
     while True:
         try:
-            _run_indexing_logic(force)
+            _run_indexing_logic(force, silent=silent)
         except Exception as e:
-            print(f"Indexer crashed: {e}")
+            if not silent:
+                print(f"Indexer crashed: {e}")
 
         # Check if a rerun was requested while we were working
         with _INDEX_LOCK:
@@ -146,11 +149,12 @@ def _indexer_worker(force=False):
                 break
             # Reset flag and loop again
             _RERUN_REQUESTED = False
-            print("Processing queued index request...")
+            if not silent:
+                print("Processing queued index request...")
             # We don't break, so the loop repeats
 
 
-def trigger_background_index(force=False):
+def trigger_background_index(force=False, silent=True):
     """
     Thread-safe non-blocking trigger for vault indexing.
     If an indexer is already running, queues a rerun after it finishes.
@@ -163,7 +167,9 @@ def trigger_background_index(force=False):
             return "Indexing queued (another process is active)."
 
         _IS_INDEXING = True
-        threading.Thread(target=_indexer_worker, args=(force,), daemon=True).start()
+        threading.Thread(
+            target=_indexer_worker, args=(force, silent), daemon=True
+        ).start()
         return "Background indexing started."
 
 
