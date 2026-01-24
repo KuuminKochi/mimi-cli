@@ -46,8 +46,6 @@ class MimiApp:
         self.config = get_config()
         self.history: List[Dict[str, Any]] = []
         self.cur_model = "deepseek-reasoner"
-        self.smart_mode = True  # Default to Intelligent Routing
-        self.active_turn_model = self.cur_model # Track resolved model for UI
         self.search_active = False
         self.thinking_mode = False
         self.autorename = True
@@ -139,45 +137,12 @@ class MimiApp:
                 ctx += f"- {f}\n"
 
         return ctx
-        
-    def _resolve_model(self, user_input: str) -> str:
-        """Intelligently routes between Instant (chat) and Reasoning models."""
-        if not self.smart_mode:
-            return self.cur_model
-            
-        active_skill = get_active_skill_name()
-        
-        # 1. Skill-Based Routing
-        instant_skills = ["counsellor", "companion", "telegram_curator", "productivity_master", "cli_wizard"]
-        reasoning_skills = ["engineering", "software_architect", "researcher", "academic_strategist", "latex_wizard"]
-        
-        if active_skill in instant_skills:
-            return "deepseek-chat"
-        if active_skill in reasoning_skills:
-            return "deepseek-reasoner"
-            
-        # 2. Heuristic Fallback (No Skill)
-        text = user_input.lower()
-        
-        # Explicit Reasoning Triggers
-        reasoning_keywords = ["solve", "calculate", "prove", "analyze", "code", "refactor", "debug", "plan", "derive", "why"]
-        if any(w in text for w in reasoning_keywords) or len(text.split()) > 20:
-             return "deepseek-reasoner"
-             
-        # Explicit Instant Triggers
-        instant_keywords = ["hi", "hello", "hey", "thanks", "ok", "cool", "list", "what is", "who is", "help"]
-        if any(text.startswith(w) for w in instant_keywords):
-            return "deepseek-chat"
-            
-        # Default to Reasoning for safety/capability, or Chat for speed?
-        # Given "Instant" preference, we bias towards chat for short queries.
-        return "deepseek-chat"
 
     def run(self):
         clear_screen()
-        print(f"\n{Colors.CYAN}Mimi Cyber-TTY Zenith v6.1 (Intelligent){Colors.RESET}")
+        print(f"\n{Colors.CYAN}Mimi Cyber-TTY Zenith v6.0 (Modular){Colors.RESET}")
         print(
-            f"{Colors.DIM}Router: {'ON' if self.smart_mode else 'OFF'} | File: {self.session_file}{Colors.RESET}\n"
+            f"{Colors.DIM}Model: {self.cur_model} | File: {self.session_file}{Colors.RESET}\n"
         )
 
         self.history = [{"role": "system", "content": load_system_prompt()}]
@@ -322,11 +287,7 @@ class MimiApp:
     def get_status_bar(self):
         now = datetime.now().strftime("%H:%M")
         s_text = "[W:ON]" if self.search_active else "[W:OFF]"
-        # t_text = "[T:ON]" if self.thinking_mode else "[T:OFF]"
-        
-        # Model Indicator
-        model_short = "THINK" if "reasoner" in self.active_turn_model else "FAST"
-        m_text = f"[M:{model_short}]"
+        t_text = "[T:ON]" if self.thinking_mode else "[T:OFF]"
 
         # Skill Indicator
         active_skill = get_active_skill_name()
@@ -334,7 +295,7 @@ class MimiApp:
 
         sys = get_sys_info()
         return (
-            f"{Colors.CYAN}[{now}]{Colors.RESET} {m_text} {s_text} {Colors.YELLOW}{skill_text}{Colors.RESET} | "
+            f"{Colors.CYAN}[{now}]{Colors.RESET} {s_text} {t_text} {Colors.YELLOW}{skill_text}{Colors.RESET} | "
             f"BAT: {sys['bat']} | CPU: {sys['cpu']} | MEM: {sys['mem']} | WIFI: {sys['wifi']} | "
             f"{Colors.GREEN}SYS: ONLINE{Colors.RESET}"
         )
@@ -396,11 +357,11 @@ class MimiApp:
             print(f"{indent}Available Commands:")
             print(f"{indent}  /session [list] - Manage sessions")
             print(f"{indent}  /history        - View conversation history")
-            print(f"{indent}  /smart          - Toggle Intelligent Routing")
+            print(f"{indent}  /search         - Toggle Web Search")
             print(f"{indent}  /thinking       - Toggle Thinking Mode")
             print(f"{indent}  /new            - Start fresh session")
             print(f"{indent}  /regen          - Regenerate last response")
-            print(f"{indent}  /model [name]   - Switch base AI model")
+            print(f"{indent}  /model [name]   - Switch AI model")
             print(f"{indent}  /autorename     - Toggle auto-renaming")
             print(f"{indent}  /prep           - Run 'git_pull_lecture_guides' routine")
             print(f"{indent}  /clear          - Clear screen")
@@ -448,13 +409,10 @@ class MimiApp:
         elif cmd[0] == "/thinking":
             self.thinking_mode = not self.thinking_mode
             print(f"{indent}Thinking Mode: {'ON' if self.thinking_mode else 'OFF'}")
-        elif cmd[0] == "/smart":
-            self.smart_mode = not self.smart_mode
-            print(f"{indent}Smart Routing: {'ON' if self.smart_mode else 'OFF'}")
         elif cmd[0] == "/model":
             if len(cmd) > 1:
                 self.cur_model = cmd[1]
-                print(f"{indent}Switched base model to: {self.cur_model}")
+                print(f"{indent}Switched to: {self.cur_model}")
         elif cmd[0] == "/new":
             self.session_file = (
                 f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
@@ -573,9 +531,6 @@ class MimiApp:
         if self.history and self.history[-1]["role"] == "user":
             content = self.history[-1]["content"].lower()
 
-        # Update Router State
-        self.active_turn_model = self._resolve_model(content)
-
         triggers = {
             "software_architect": ["refactor", "code", "class", "function", "api", "impl", "bug", "fix"],
             "researcher": ["research", "find", "search", "investigate", "summary"],
@@ -587,72 +542,33 @@ class MimiApp:
             "productivity_master": ["schedule", "deadline", "priority", "todo", "tutorial", "daily note"],
             "telegram_curator": ["telegram", "channel", "post", "share", "community", "pasum notes"],
             "latex_wizard": ["equation", "formula", "derivation", "align", "typeset", "mathjax"],
-            "counsellor": ["sad", "depressed", "anxious", "stress", "tired", "burnout", "vent", "cry", "feel", "worry", "hopeless"],
-            "companion": ["let's play", "roleplay", "pretend", "hang out", "bored", "coffee", "gossip", "movie", "game"],
         }
         
         relevant_skills = [s for s, kws in triggers.items() if any(kw in content for kw in kws)]
         
         if relevant_skills:
             if not active_skill:
-                # Special prompt for Soft Skills
-                if "counsellor" in relevant_skills:
-                     hint = (
-                        f"** SKILL ADVISORY **\n"
-                        f"It seems you are expressing strong emotions. "
-                        f"Mimi has a 'counsellor' skill designed for supportive listening. "
-                        f"Consider using `load_skill(name='counsellor')`."
-                    )
-                elif "companion" in relevant_skills:
-                    hint = (
-                        f"** SKILL ADVISORY **\n"
-                        f"Sounds like fun! "
-                        f"Mimi has a 'companion' skill for casual chats and roleplay. "
-                        f"Consider using `load_skill(name='companion')` to vibe."
-                    )
-                else:
-                    hint = (
-                        f"** MANDATORY SKILL PROTOCOL **\n"
-                        f"Task detected: {', '.join(relevant_skills)}.\n"
-                        f"You MUST use 'load_skill' to activate the corresponding expert mindset "
-                        f"BEFORE executing any other tools. This ensures project standards are met."
-                    )
+                hint = (
+                    f"** MANDATORY SKILL PROTOCOL **\n"
+                    f"Task detected: {', '.join(relevant_skills)}.\n"
+                    f"You MUST use 'load_skill' to activate the corresponding expert mindset "
+                    f"BEFORE executing any other tools. This ensures project standards (LaTeX, WikiLinks, etc.) are met."
+                )
                 messages_to_send.append({"role": "system", "content": hint})
             elif active_skill not in relevant_skills:
-                 # Don't nag if compatible (e.g. companion and counsellor are both soft)
-                 soft_skills = ["companion", "counsellor"]
-                 if not (active_skill in soft_skills and any(s in soft_skills for s in relevant_skills)):
-                    hint = (
-                        f"** SKILL ADVISORY **\n"
-                        f"You are currently using '{active_skill}', but the task seems to involve '{', '.join(relevant_skills)}'. "
-                        f"Consider if you should 'unload_skill' and 'load_skill' for the new domain."
-                    )
-                    messages_to_send.append({"role": "system", "content": hint})
+                hint = (
+                    f"** SKILL ADVISORY **\n"
+                    f"You are currently using '{active_skill}', but the task seems to involve '{', '.join(relevant_skills)}'. "
+                    f"Consider if you should 'unload_skill' and 'load_skill' for the new domain to maintain quality."
+                )
+                messages_to_send.append({"role": "system", "content": hint})
 
         while True:
             printer = StreamPrinter(width, indent, "Mimi")
-            
-            # --- TOOL FILTERING FOR SOFT SKILLS ---
-            all_tools = get_tool_definitions()
-            tools_to_use = all_tools
-            
-            soft_skills = ["counsellor", "companion"]
-            
-            if active_skill in soft_skills:
-                # Allowed: Memory, Vault, Notes, Skill management + Web (for companion)
-                allowed_tools = [
-                    "load_skill", "unload_skill", "list_skills", 
-                    "add_memory", "search_memory", "vault_search", "vault_query",
-                    "add_note", "delete_note"
-                ]
-                if active_skill == "companion":
-                    allowed_tools.extend(["web_search", "describe_image"]) # Companion can look up memes/images
-                
-                tools_to_use = [t for t in all_tools if t["function"]["name"] in allowed_tools]
+            tools = get_tool_definitions()
 
-            # Call API with resolved model
             response = call_api(
-                messages_to_send, model=self.active_turn_model, stream=True, tools=tools_to_use
+                messages_to_send, model=self.cur_model, stream=True, tools=tools
             )
             if not response:
                 break
@@ -851,51 +767,46 @@ class MimiApp:
 
         from mimi_lib.memory.brain import get_literal_matches
         from mimi_lib.memory.vault_indexer import search_vault
-        from mimi_lib.memory.embeddings import semantic_search
 
         rem = "\n**Reminiscence (Relevant History & Notes):**\n"
         found = False
         seen_contents = set()
 
-        # TURBO: Parallel RAG Execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            # Launch searches in parallel
-            f_vault = executor.submit(search_vault, user_input, top_k=2)
-            f_semantic = executor.submit(semantic_search, user_input, top_k=2)
-            f_literal = executor.submit(get_literal_matches, user_input, top_k=2)
+        # 1. Semantic Search (Vault Knowledge)
+        try:
+            vault_results = search_vault(user_input, top_k=2)
+            for r in vault_results:
+                content = f"[{r['path']}] {r['text']}"
+                if content not in seen_contents:
+                    rem += f"- [Vault] {content}\n"
+                    seen_contents.add(content)
+                    found = True
+        except:
+            pass
 
-            # 1. Vault Search Results
-            try:
-                vault_results = f_vault.result()
-                for r in vault_results:
-                    content = f"[{r['path']}] {r['text']}"
-                    if content not in seen_contents:
-                        rem += f"- [Vault] {content}\n"
-                        seen_contents.add(content)
-                        found = True
-            except: pass
+        # 2. Semantic Search (Session Memory)
+        try:
+            semantic_results = semantic_search(user_input, top_k=2)
+            for r in semantic_results:
+                content = r["content"]
+                if content not in seen_contents:
+                    rem += f"- [Intuition] {content}\n"
+                    seen_contents.add(content)
+                    found = True
+        except:
+            pass
 
-            # 2. Semantic Search (Session Memory)
-            try:
-                semantic_results = f_semantic.result()
-                for r in semantic_results:
-                    content = r["content"]
-                    if content not in seen_contents:
-                        rem += f"- [Intuition] {content}\n"
-                        seen_contents.add(content)
-                        found = True
-            except: pass
-
-            # 3. Literal Search (Keyword)
-            try:
-                literal_results = f_literal.result()
-                for r in literal_results:
-                    content = r["content"]
-                    if content not in seen_contents:
-                        rem += f"- [Recall] {content}\n"
-                        seen_contents.add(content)
-                        found = True
-            except: pass
+        # 3. Literal Search (Keyword)
+        try:
+            literal_results = get_literal_matches(user_input, top_k=2)
+            for r in literal_results:
+                content = r["content"]
+                if content not in seen_contents:
+                    rem += f"- [Recall] {content}\n"
+                    seen_contents.add(content)
+                    found = True
+        except:
+            pass
 
         return rem if found else ""
 

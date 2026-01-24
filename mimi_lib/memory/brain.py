@@ -1,7 +1,30 @@
 import json
 import re
+import uuid
 from datetime import datetime
-from mimi_lib.config import LOCAL_PROMPT_FILE, VAULT_PROMPT_FILE, MEMORY_ARCHIVE_FILE, MEMORY_STORE_FILE, MEMORY_VECTORS_FILE, PERSONA_CORE_FILE
+from mimi_lib.config import (
+    LOCAL_PROMPT_FILE,
+    VAULT_PROMPT_FILE,
+    MEMORY_ARCHIVE_FILE,
+    MEMORY_STORE_FILE,
+    PERSONA_CORE_FILE,
+    DIARY_STORE_FILE,
+    NOTES_STORE_FILE,
+)
+
+
+def load_json(path, default=None):
+    if not path.exists():
+        return default if default is not None else []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except:
+        return default if default is not None else []
+
+
+def save_json(path, data):
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
 
 def load_system_prompt():
     # Sync logic: Obsidian is master if it exists
@@ -53,26 +76,107 @@ def get_literal_matches(query: str, top_k: int = 2):
         return []
 
 def save_memory(content, category="Kuumin"):
-    archive = []
-    if MEMORY_ARCHIVE_FILE.exists():
-        try: archive = json.loads(MEMORY_ARCHIVE_FILE.read_text())
-        except: pass
-    
+    archive = load_json(MEMORY_ARCHIVE_FILE)
     mem_id = int(datetime.now().timestamp() * 1000)
     item = {
         "id": mem_id,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "content": content,
-        "category": category
+        "category": category,
     }
-    archive.append(item)
-    MEMORY_ARCHIVE_FILE.write_text(json.dumps(archive, indent=2))
-    
+
+    if not any(m.get("content") == content for m in archive):
+        archive.append(item)
+        save_json(MEMORY_ARCHIVE_FILE, archive)
+
     # Also update active store
-    store = []
-    if MEMORY_STORE_FILE.exists():
-        try: store = json.loads(MEMORY_STORE_FILE.read_text())
-        except: pass
-    store.append(item)
-    MEMORY_STORE_FILE.write_text(json.dumps(store, indent=2))
+    store = load_json(MEMORY_STORE_FILE)
+    if not any(m.get("content") == content for m in store):
+        store.append(item)
+        save_json(MEMORY_STORE_FILE, store)
     return mem_id
+
+
+def delete_memory(mem_id):
+    try:
+        target_id = int(mem_id)
+    except:
+        return False
+
+    deleted = False
+    # Store
+    store = load_json(MEMORY_STORE_FILE)
+    new_store = [m for m in store if m.get("id") != target_id]
+    if len(new_store) < len(store):
+        save_json(MEMORY_STORE_FILE, new_store)
+        deleted = True
+
+    # Archive
+    archive = load_json(MEMORY_ARCHIVE_FILE)
+    new_archive = [m for m in archive if m.get("id") != target_id]
+    if len(new_archive) < len(archive):
+        save_json(MEMORY_ARCHIVE_FILE, new_archive)
+        deleted = True
+
+    return deleted
+
+
+def add_note(content, priority="Medium", tags=None):
+    if tags is None:
+        tags = []
+    notes = load_json(NOTES_STORE_FILE)
+    note_id = str(uuid.uuid4())[:8]
+    notes.append(
+        {
+            "id": note_id,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "content": content,
+            "priority": priority,
+            "tags": tags,
+        }
+    )
+    save_json(NOTES_STORE_FILE, notes)
+    return note_id
+
+
+def delete_note(note_id):
+    notes = load_json(NOTES_STORE_FILE)
+    initial_len = len(notes)
+    notes = [n for n in notes if n.get("id") != note_id]
+    if len(notes) < initial_len:
+        save_json(NOTES_STORE_FILE, notes)
+        return True
+    return False
+
+
+def load_diary():
+    return load_json(DIARY_STORE_FILE)
+
+
+def save_diary_entry(content, date=None):
+    if date is None:
+        date = datetime.now().strftime("%Y-%m-%d")
+    diary = load_json(DIARY_STORE_FILE)
+    entry = {
+        "date": date,
+        "content": content,
+        "timestamp": int(datetime.now().timestamp()),
+    }
+    # Update existing or append
+    existing_idx = next((i for i, d in enumerate(diary) if d["date"] == date), None)
+    if existing_idx is not None:
+        diary[existing_idx] = entry
+    else:
+        diary.append(entry)
+    save_json(DIARY_STORE_FILE, diary)
+    return True
+
+
+def delete_diary_entry(date):
+    diary = load_json(DIARY_STORE_FILE)
+    initial_len = len(diary)
+    diary = [d for d in diary if d["date"] != date]
+    if len(diary) < initial_len:
+        save_json(DIARY_STORE_FILE, diary)
+        return True
+    return False

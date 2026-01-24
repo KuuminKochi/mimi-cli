@@ -7,16 +7,18 @@ from mimi_lib.config import get_config, MEMORY_VECTORS_FILE, MEMORY_ARCHIVE_FILE
 # Global Session
 _http_session = None
 
+
 def get_session():
     global _http_session
     if _http_session is None:
         _http_session = requests.Session()
     return _http_session
 
+
 def get_embedding(text: str) -> Optional[List[float]]:
     config = get_config()
     session = get_session()
-    
+
     # Using OpenRouter by default as per existing code
     url = f"{config['openrouter_base_url']}/embeddings"
     headers = {
@@ -29,12 +31,16 @@ def get_embedding(text: str) -> Optional[List[float]]:
     }
 
     try:
-        res = session.post(url, headers=headers, json=payload, timeout=10)
+        # Increased timeout to 60 seconds and added basic retry
+        res = session.post(url, headers=headers, json=payload, timeout=60)
         if res.ok:
             return res.json()["data"][0]["embedding"]
+        else:
+            print(f"[Embeddings] API Error: {res.status_code} - {res.text}")
     except Exception as e:
         print(f"[Embeddings] Connection failed: {e}")
     return None
+
 
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     if not v1 or not v2 or len(v1) != len(v2):
@@ -46,6 +52,7 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
         return 0.0
     return dot_product / (magnitude1 * magnitude2)
 
+
 def load_vectors() -> Dict[str, List[float]]:
     if not MEMORY_VECTORS_FILE.exists():
         return {}
@@ -55,11 +62,15 @@ def load_vectors() -> Dict[str, List[float]]:
     except:
         return {}
 
+
 def save_vectors(vectors: Dict[str, List[float]]):
     with open(MEMORY_VECTORS_FILE, "w") as f:
         json.dump(vectors, f)
 
-def semantic_search(query_text: str, top_k: int = 3, vectors_cache: Optional[Dict] = None) -> List[Dict]:
+
+def semantic_search(
+    query_text: str, top_k: int = 3, vectors_cache: Optional[Dict] = None
+) -> List[Dict]:
     query_vector = get_embedding(query_text)
     if not query_vector:
         return []

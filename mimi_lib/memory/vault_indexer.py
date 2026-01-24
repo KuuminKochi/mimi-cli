@@ -14,6 +14,42 @@ _IS_INDEXING = False
 # Flag to indicate if another run was requested while one was active
 _RERUN_REQUESTED = False
 
+# --- PERFORMANCE CACHE ---
+_VECTOR_CACHE = None
+_VECTOR_CACHE_MTIME = 0
+_CACHE_LOCK = threading.Lock()
+
+
+def _load_vectors_cached():
+    """Thread-safe cached loading of vectors."""
+    global _VECTOR_CACHE, _VECTOR_CACHE_MTIME
+
+    if not VAULT_VECTORS_FILE.exists():
+        return {}
+
+    current_mtime = VAULT_VECTORS_FILE.stat().st_mtime
+
+    with _CACHE_LOCK:
+        if _VECTOR_CACHE is not None and current_mtime == _VECTOR_CACHE_MTIME:
+            return _VECTOR_CACHE
+
+        try:
+            vectors = json.loads(VAULT_VECTORS_FILE.read_text())
+            _VECTOR_CACHE = vectors
+            _VECTOR_CACHE_MTIME = current_mtime
+            return vectors
+        except:
+            return {}
+
+
+def _update_vector_cache(vectors):
+    """Directly update cache after indexing."""
+    global _VECTOR_CACHE, _VECTOR_CACHE_MTIME
+    with _CACHE_LOCK:
+        _VECTOR_CACHE = vectors
+        if VAULT_VECTORS_FILE.exists():
+            _VECTOR_CACHE_MTIME = VAULT_VECTORS_FILE.stat().st_mtime
+
 
 def chunk_text(text, max_chars=1500):
     """Simple chunking by paragraphs or sentences."""
@@ -57,6 +93,7 @@ def _run_indexing_logic(force=False, silent=True):
         except:
             pass
 
+    # Load initial vectors (uncached here as we are modifying)
     vectors = {}
     if VAULT_VECTORS_FILE.exists():
         try:
@@ -127,6 +164,9 @@ def _run_indexing_logic(force=False, silent=True):
     if updated_count > 0:
         VAULT_VECTORS_FILE.write_text(json.dumps(vectors))
         VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
+        
+        # UPDATE CACHE
+        _update_vector_cache(vectors)
 
     return f"Indexed {updated_count} new/updated files. Total files in index: {len(index_log)}"
 
@@ -185,14 +225,14 @@ def index_vault(force=False):
 
 
 def search_vault(query, top_k=5):
-    """Semantic search across the vault vectors."""
+    """Semantic search across the vault vectors with attribution and caching."""
     query_vector = get_embedding(query)
-    if not query_vector or not VAULT_VECTORS_FILE.exists():
+    if not query_vector:
         return []
 
-    try:
-        vectors = json.loads(VAULT_VECTORS_FILE.read_text())
-    except:
+    # Use Cache
+    vectors = _load_vectors_cached()
+    if not vectors:
         return []
 
     results = []
@@ -200,8 +240,24 @@ def search_vault(query, top_k=5):
         for chunk_data in chunks:
             sim = cosine_similarity(query_vector, chunk_data["embedding"])
             if sim > 0.4:  # Similarity threshold
+                text = chunk_data["text"]
+                
+                # --- ATTRIBUTION LOGIC ---
+                is_mimi = False
+                if "Mimi/Sessions" in rel_path:
+                    is_mimi = True
+                elif "mimi_signed: true" in text or "Signed by Mimi" in text:
+                    is_mimi = True
+                elif "_Signed by Mimi" in text:
+                    is_mimi = True
+                
+                if is_mimi:
+                    attributed_text = f"[AUTHOR: Mimi (Auto-Memory)]\n{text}"
+                else:
+                    attributed_text = f"[AUTHOR: Kuumin]\n{text}"
+
                 results.append(
-                    {"score": sim, "path": rel_path, "text": chunk_data["text"]}
+                    {"score": sim, "path": rel_path, "text": attributed_text}
                 )
 
     results.sort(key=lambda x: x["score"], reverse=True)

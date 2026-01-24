@@ -68,6 +68,11 @@ def sync_vault(message: str) -> str:
     if not success:
         return f"{pull_msg}\nCommit successful: {commit_msg}\nError pushing: {output}"
 
+    # Trigger background re-index after sync
+    from mimi_lib.memory.vault_indexer import trigger_background_index
+
+    trigger_background_index()
+
     return f"Vault Sync Complete.\n{pull_msg}\n{commit_msg}\nPush result: {output}"
 
 

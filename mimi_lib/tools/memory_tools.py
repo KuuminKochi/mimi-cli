@@ -1,19 +1,78 @@
 from mimi_lib.tools.registry import register_tool
-from mimi_lib.memory.brain import save_memory
+from mimi_lib.memory.brain import save_memory, delete_memory
 from mimi_lib.memory.embeddings import semantic_search
 from mimi_lib.memory.vault_indexer import index_vault, search_vault
-from mimi_lib.config import VAULT_PATH
+from mimi_lib.config import VAULT_PATH, MEMORY_ARCHIVE_FILE
+import json
 import subprocess
 import os
 
 
 @register_tool(
-    "vault_index",
-    "Index or refresh the Obsidian vault knowledge base.",
-    {"type": "object", "properties": {"force": {"type": "boolean", "default": False}}},
+    "add_memory",
+    "Commit a significant fact, event, or user preference to long-term memory.",
+    {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The concise fact to remember.",
+            },
+            "category": {
+                "type": "string",
+                "enum": ["Kuumin", "Mimi", "Events", "Others"],
+                "default": "Kuumin",
+                "description": "Category for the memory.",
+            },
+        },
+        "required": ["content"],
+    },
 )
-def vault_index(force: bool = False):
-    return index_vault(force=force)
+def add_memory_tool(content: str, category: str = "Kuumin"):
+    mem_id = save_memory(content, category)
+    return f"Memory saved with ID: {mem_id}"
+
+
+@register_tool(
+    "delete_memory",
+    "Remove a memory by its ID.",
+    {
+        "type": "object",
+        "properties": {
+            "id": {"type": "string", "description": "The ID of the memory to delete."}
+        },
+        "required": ["id"],
+    },
+)
+def delete_memory_tool(id: str):
+    success = delete_memory(id)
+    if success:
+        return f"Memory {id} deleted successfully."
+    return f"Failed to find or delete memory {id}."
+
+
+@register_tool(
+    "search_memory",
+    "Search the internal memory store (non-vault) for facts.",
+    {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The semantic search query."}
+        },
+        "required": ["query"],
+    },
+)
+def search_memory_tool(query: str):
+    results = semantic_search(query, top_k=5)
+    if not results:
+        return "No relevant memories found."
+
+    output = [f"Memory Search Results for '{query}':"]
+    for r in results:
+        output.append(
+            f"- [{r.get('timestamp')}] {r.get('content')} (ID: {r.get('id')})"
+        )
+    return "\n".join(output)
 
 
 @register_tool(
@@ -37,28 +96,50 @@ def vault_search(query: str):
 
 
 @register_tool(
-    "obsidian_query",
-    "Search and read notes from the user's Obsidian vault (Keyword match).",
+    "vault_query",
+    "Search The Vault for filenames and content to find valid [[WikiLinks]] targets.",
     {
         "type": "object",
         "properties": {"query": {"type": "string"}},
         "required": ["query"],
     },
 )
-def obsidian_query(query: str):
+def vault_query(query: str):
     vault_path = str(VAULT_PATH)
     try:
-        cmd = ["grep", "-r", "-i", "-l", query, vault_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
+        # Search filenames first (for linking)
+        cmd_files = ["find", vault_path, "-iname", f"*{query}*"]
+        res_files = subprocess.run(cmd_files, capture_output=True, text=True)
+        found_files = (
+            res_files.stdout.strip().split("\n") if res_files.stdout.strip() else []
+        )
+
+        # Then search content
+        cmd_content = ["grep", "-r", "-i", "-l", query, vault_path]
+        res_content = subprocess.run(cmd_content, capture_output=True, text=True)
+        content_files = (
+            res_content.stdout.strip().split("\n") if res_content.stdout.strip() else []
+        )
+
+        all_files = sorted(list(set(found_files + content_files)))
+
+        if not all_files:
             return "No matching notes found."
-        files = result.stdout.strip().split("\n")
-        output = [f"Found {len(files)} matching notes:"]
-        for fpath in files[:3]:
-            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                output.append(
-                    f"\n--- {os.path.relpath(fpath, vault_path)} ---\n{f.read()[:1000]}"
-                )
+
+        output = [f"Found {len(all_files)} matching notes (Use these for [[Links]]):"]
+        for fpath in all_files[:5]:
+            if not fpath:
+                continue
+            rel_path = os.path.relpath(fpath, vault_path)
+            # Extract just filename for easy linking
+            name_only = os.path.basename(fpath).replace(".md", "")
+            output.append(f"\n- [[{name_only}]] (Path: {rel_path})")
+
+            # Preview content
+            if os.path.isfile(fpath):
+                with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                    output.append(f"  Preview: {f.read()[:200]}...")
+
         return "\n".join(output)
     except Exception as e:
-        return f"Obsidian query error: {e}"
+        return f"Vault query error: {e}"

@@ -11,11 +11,13 @@ import uuid
 if "/home/kuumin/Projects/mimi-cli" not in sys.path:
     sys.path.append("/home/kuumin/Projects/mimi-cli")
 try:
-    import mimi_deepseek_integration
-    import mimi_embeddings
+    from mimi_lib.api import deepseek as mimi_deepseek_integration
+    from mimi_lib.memory import embeddings as mimi_embeddings
 except ImportError:
     mimi_deepseek_integration = None
     mimi_embeddings = None
+
+from mimi_lib.memory.brain import load_json, save_json, save_memory, add_note, delete_note
 
 from mimi_lib.config import (
     SESSION_DIR, MEMORY_ARCHIVE_FILE, MEMORY_STORE_FILE, PERSONA_CORE_FILE,
@@ -61,20 +63,8 @@ def send_notification(message):
         pass
 
 
-def load_json(path, default):
-    if not os.path.exists(path):
-        return default
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return default
-
-
-def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
+def save_json_with_export(path, data):
+    save_json(path, data)
     # Trigger exports based on file type
     if path == MEMORY_STORE_FILE:
         export_memories_to_obsidian(data)
@@ -258,7 +248,7 @@ def migrate_categories():
                         if "category" not in m_item:
                             m_item["category"] = "Kuumin"
 
-            save_json(MEMORY_STORE_FILE, memories)
+            save_json_with_export(MEMORY_STORE_FILE, memories)
             print("Migration complete.")
         except Exception as e:
             print(f"Migration failed: {e}")
@@ -477,7 +467,7 @@ def check_and_compress():
                 else:
                     new_memory_store.extend(items)
 
-            save_json(MEMORY_STORE_FILE, new_memory_store)
+            save_json_with_export(MEMORY_STORE_FILE, new_memory_store)
             sync_instructions_with_store()
             print("[Maintenance] Compression complete.")
 
@@ -534,7 +524,7 @@ def add_memory(data):
                 "category": category,
             }
         )
-        save_json(MEMORY_STORE_FILE, memories)
+        save_json_with_export(MEMORY_STORE_FILE, memories)
         sync_instructions_with_store()
         send_notification(f"Mimi remembered ({category}): {content}")
     # Compression is now handled by the background loop to prevent timeouts
@@ -557,7 +547,7 @@ def add_note(content, priority="Medium", tags=None):
         }
     )
 
-    save_json(NOTES_STORE_FILE, notes)
+    save_json_with_export(NOTES_STORE_FILE, notes)
     sync_instructions_with_store()
     return note_id
 
@@ -568,7 +558,7 @@ def delete_note(note_id):
     notes = [n for n in notes if n.get("id") != note_id]
 
     if len(notes) < initial_len:
-        save_json(NOTES_STORE_FILE, notes)
+        save_json_with_export(NOTES_STORE_FILE, notes)
         sync_instructions_with_store()
         return True
     return False
@@ -610,7 +600,7 @@ def perform_session_synthesis():
                 diary_store[existing_idx] = entry
             else:
                 diary_store.append(entry)
-            save_json(DIARY_STORE_FILE, diary_store)
+            save_json_with_export(DIARY_STORE_FILE, diary_store)
             export_diary_to_obsidian()
             add_memory(
                 {
@@ -630,7 +620,7 @@ def perform_session_synthesis():
         if new_narrative:
             current_persona["narrative"] = new_narrative
             current_persona["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            save_json(PERSONA_CORE_FILE, current_persona)
+            save_json_with_export(PERSONA_CORE_FILE, current_persona)
             print("[Evolution] Personality core updated.")
             sync_instructions_with_store()
 
@@ -757,7 +747,7 @@ def import_memories_from_obsidian():
             # Simple merge: replace if same content or just use the new list
             # For simplicity and given the user's "sync" request, we replace with the Obsidian version
             # as it's the "newer" source.
-            save_json(MEMORY_STORE_FILE, new_memories)
+            save_json_with_export(MEMORY_STORE_FILE, new_memories)
             print(f"Imported {len(new_memories)} memories from Obsidian.")
     except Exception as e:
         print(f"Failed to import memories from Obsidian: {e}")
