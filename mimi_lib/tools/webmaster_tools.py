@@ -204,7 +204,7 @@ author: {author}
 
 @register_tool(
     name="deploy_site",
-    description="Commits and pushes changes to the website repository.",
+    description="Syncs content using ksync, then commits and pushes changes to the website repository.",
     parameters={
         "type": "object",
         "properties": {"message": {"type": "string", "description": "Commit message"}},
@@ -212,8 +212,22 @@ author: {author}
     },
 )
 def deploy_site(message: str) -> str:
-    """Runs git add, commit, push for the site."""
+    """Runs ksync, then git add, commit, push for the site."""
     try:
+        # Step 1: Run ksync to ensure all new content is baked into index.html
+        sync_res = subprocess.run(
+            [KSYNC_CMD], capture_output=True, text=True, check=False
+        )
+        if sync_res.returncode != 0:
+            # Fallback
+            sync_script = os.path.join(SITE_ROOT, "sync.py")
+            sync_res = subprocess.run(
+                ["python3", sync_script], capture_output=True, text=True, check=False
+            )
+            if sync_res.returncode != 0:
+                return f"Sync failed before deploy: {sync_res.stderr}"
+
+        # Step 2: Git Operations
         # Check if there are changes
         status = subprocess.run(
             ["git", "-C", SITE_ROOT, "status", "--porcelain"],
@@ -222,7 +236,7 @@ def deploy_site(message: str) -> str:
         )
 
         if not status.stdout.strip():
-            return "No changes to deploy."
+            return "Sync completed, but no changes detected to deploy."
 
         # Add
         subprocess.run(["git", "-C", SITE_ROOT, "add", "."], check=True)
@@ -239,7 +253,7 @@ def deploy_site(message: str) -> str:
         )
 
         if push_res.returncode == 0:
-            return "Site deployed successfully."
+            return "Site synced and deployed successfully."
         else:
             return f"Commit successful but push failed: {push_res.stderr}"
 
