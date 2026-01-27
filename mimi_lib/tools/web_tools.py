@@ -3,15 +3,20 @@ import concurrent.futures
 from typing import List
 from mimi_lib.tools.registry import register_tool
 
+
 def _web_search(query: str) -> str:
     try:
         from ddgs import DDGS
+
         results = list(DDGS().text(query, max_results=3))
         if not results:
             return "No results found."
-        return "\n\n".join([f"[{r['title']}]({r['href']})\n{r['body']}" for r in results])
+        return "\n\n".join(
+            [f"[{r['title']}]({r['href']})\n{r['body']}" for r in results]
+        )
     except Exception as e:
         return f"Search error: {e}"
+
 
 def _web_fetch(url: str) -> str:
     try:
@@ -25,11 +30,13 @@ def _web_fetch(url: str) -> str:
         if "application/pdf" in content_type or url.lower().endswith(".pdf"):
             import pypdf
             from io import BytesIO
+
             reader = pypdf.PdfReader(BytesIO(res.content))
             text = [page.extract_text() for page in reader.pages]
             return f"--- PDF Content ({url}) ---\n" + "\n".join(text)[:20000]
 
         from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(res.text, "html.parser")
         for script in soup(["script", "style", "nav", "footer", "header"]):
             script.decompose()
@@ -39,18 +46,28 @@ def _web_fetch(url: str) -> str:
     except Exception as e:
         return f"Fetch error: {e}"
 
+
 @register_tool(
     "web_search",
     "Search the internet for up-to-date information.",
-    {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}
+    {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
 )
 def web_search(query: str):
     return _web_search(query)
 
+
 @register_tool(
     "web_batch_search",
     "Search multiple queries in parallel for efficiency.",
-    {"type": "object", "properties": {"queries": {"type": "array", "items": {"type": "string"}}}, "required": ["queries"]}
+    {
+        "type": "object",
+        "properties": {"queries": {"type": "array", "items": {"type": "string"}}},
+        "required": ["queries"],
+    },
 )
 def web_batch_search(queries: List[str]):
     results = []
@@ -60,10 +77,11 @@ def web_batch_search(queries: List[str]):
             results.append(f"--- Results for: {futures[future]} ---\n{future.result()}")
     return "\n\n".join(results)
 
+
 @register_tool(
     "web_fetch",
     "Read the content of a specific URL (HTML or PDF).",
-    {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}
+    {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
 )
 def web_fetch(url: str):
     return _web_fetch(url)

@@ -87,7 +87,8 @@ def call_api(
         is_deepseek = any(x in model.lower() for x in ["deepseek", "reasoner"])
         # Check for credit failures or 400 errors (often due to R1 limitations)
         is_recoverable = any(
-            x in str(e).lower() for x in ["insufficient", "balance", "credit", "402", "400"]
+            x in str(e).lower()
+            for x in ["insufficient", "balance", "credit", "402", "400"]
         )
 
         if is_deepseek and is_recoverable and config.get("openrouter_api_key"):
@@ -98,7 +99,13 @@ def call_api(
                 else "deepseek/deepseek-chat"
             )
             # Recursive call with fallback model
-            return call_api(messages, model=f"or/{fallback_model}", stream=stream, tools=tools, response_format=response_format)
+            return call_api(
+                messages,
+                model=f"or/{fallback_model}",
+                stream=stream,
+                tools=tools,
+                response_format=response_format,
+            )
         else:
             print(f"[API] Error: {e}")
             return None

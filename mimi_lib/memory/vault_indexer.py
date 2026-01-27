@@ -164,7 +164,7 @@ def _run_indexing_logic(force=False, silent=True):
     if updated_count > 0:
         VAULT_VECTORS_FILE.write_text(json.dumps(vectors))
         VAULT_INDEX_LOG.write_text(json.dumps(index_log, indent=2))
-        
+
         # UPDATE CACHE
         _update_vector_cache(vectors)
 
@@ -241,7 +241,7 @@ def search_vault(query, top_k=5):
             sim = cosine_similarity(query_vector, chunk_data["embedding"])
             if sim > 0.4:  # Similarity threshold
                 text = chunk_data["text"]
-                
+
                 # --- ATTRIBUTION LOGIC ---
                 is_mimi = False
                 if "Mimi/Sessions" in rel_path:
@@ -250,7 +250,7 @@ def search_vault(query, top_k=5):
                     is_mimi = True
                 elif "_Signed by Mimi" in text:
                     is_mimi = True
-                
+
                 if is_mimi:
                     attributed_text = f"[AUTHOR: Mimi (Auto-Memory)]\n{text}"
                 else:

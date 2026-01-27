@@ -15,6 +15,7 @@ from mimi_lib.ui.input import VimInput
 # NOTE: COMMANDS are now usually in the App class, but VimInput might not have them as static list anymore.
 # We'll check the implementation of VimInput.
 
+
 class TestANSIHelpers(unittest.TestCase):
     """Test ANSI escape helper functions."""
 

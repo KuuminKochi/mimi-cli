@@ -17,13 +17,27 @@ except ImportError:
     mimi_deepseek_integration = None
     mimi_embeddings = None
 
-from mimi_lib.memory.brain import load_json, save_json, save_memory, add_note, delete_note
+from mimi_lib.memory.brain import (
+    load_json,
+    save_json,
+    save_memory,
+    add_note,
+    delete_note,
+)
 
 from mimi_lib.config import (
-    SESSION_DIR, MEMORY_ARCHIVE_FILE, MEMORY_STORE_FILE, PERSONA_CORE_FILE,
-    DIARY_STORE_FILE, NOTES_STORE_FILE, PROCESSED_LOG, COUNTER_FILE,
-    OBSIDIAN_MEMORY_FILE, OBSIDIAN_DIARY_FILE, OBSIDIAN_NOTES_FILE,
-    LOCAL_PROMPT_FILE as OBSIDIAN_PROMPT_FILE # Map local prompt file for sync
+    SESSION_DIR,
+    MEMORY_ARCHIVE_FILE,
+    MEMORY_STORE_FILE,
+    PERSONA_CORE_FILE,
+    DIARY_STORE_FILE,
+    NOTES_STORE_FILE,
+    PROCESSED_LOG,
+    COUNTER_FILE,
+    OBSIDIAN_MEMORY_FILE,
+    OBSIDIAN_DIARY_FILE,
+    OBSIDIAN_NOTES_FILE,
+    LOCAL_PROMPT_FILE as OBSIDIAN_PROMPT_FILE,  # Map local prompt file for sync
 )
 
 # Paths for Jan (Keep for legacy sync if needed)
@@ -47,7 +61,6 @@ session_messages = {"user": [], "assistant": []}
 OBSIDIAN_COPILOT_CONFIG = (
     "/home/kuumin/Documents/kuumin/.obsidian/plugins/copilot/data.json"
 )
-
 
 
 def send_notification(message):

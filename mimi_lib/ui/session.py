@@ -4,6 +4,7 @@ import tty
 import termios
 from mimi_lib.utils.text import Colors, get_layout
 
+
 class SessionSelector:
     def __init__(self, session_dir):
         self.session_dir = session_dir
@@ -32,10 +33,12 @@ class SessionSelector:
             # Clear screen manually here or import clear_screen
             sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
-            
+
             width, indent, _, rows = get_layout()
 
-            print(f"{indent}{Colors.CYAN}┌──[ Select Session ]{'─' * (width - 20)}┐{Colors.RESET}")
+            print(
+                f"{indent}{Colors.CYAN}┌──[ Select Session ]{'─' * (width - 20)}┐{Colors.RESET}"
+            )
 
             start_idx = max(0, idx - (window_size // 2))
             end_idx = min(len(files), start_idx + window_size)
@@ -48,12 +51,14 @@ class SessionSelector:
                 name_color = Colors.BOLD if is_selected else Colors.DIM
 
                 # Truncate filename if too long
-                display_name = f_name[:width-10]
+                display_name = f_name[: width - 10]
                 line = f"{indent}│ {prefix}{name_color}{display_name:<40}{Colors.RESET}"
                 print(line)
 
             print(f"{indent}{Colors.CYAN}└{'─' * (width - 2)}┘{Colors.RESET}")
-            print(f"{indent}{Colors.DIM}[UP/DOWN] Select | [ENTER] Load | [Q] Cancel{Colors.RESET}")
+            print(
+                f"{indent}{Colors.DIM}[UP/DOWN] Select | [ENTER] Load | [Q] Cancel{Colors.RESET}"
+            )
 
             fd = sys.stdin.fileno()
             old = termios.tcgetattr(fd)

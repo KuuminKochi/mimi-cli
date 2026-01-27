@@ -1,6 +1,7 @@
 import sys
 from mimi_lib.utils.text import Colors, visible_len
 
+
 class StreamPrinter:
     def __init__(self, width: int, indent: str, role: str = "Mimi"):
         self.width, self.indent = width, indent
@@ -30,7 +31,8 @@ class StreamPrinter:
             tag = f"[THINK: {self.role}]" if reasoning else f"[{self.role}]"
             print(f"\n\n{self.indent}{color}{tag}{Colors.RESET}")
             print(f"{self.indent}    ", end="", flush=True)
-            if reasoning: print(Colors.DIM, end="", flush=True)
+            if reasoning:
+                print(Colors.DIM, end="", flush=True)
             self.is_start = False
 
         main_color = Colors.DIM if self.is_reasoning else self.speech_color
@@ -43,7 +45,8 @@ class StreamPrinter:
                 continue
             if self.in_code:
                 self.word_buf += char
-                if char == " ": self.flush()
+                if char == " ":
+                    self.flush()
                 continue
 
             if char == "*":
@@ -54,27 +57,45 @@ class StreamPrinter:
                 if self.pending_stars >= 2:
                     self.flush()
                     self.in_bold = not self.in_bold
-                    print(Colors.CYAN if self.in_bold else main_color, end="", flush=True)
+                    print(
+                        Colors.CYAN if self.in_bold else main_color, end="", flush=True
+                    )
                     self.pending_stars -= 2
                 if self.pending_stars == 1:
                     self.flush()
                     self.in_italic = not self.in_italic
-                    print(Colors.YELLOW if self.in_italic else main_color, end="", flush=True)
+                    print(
+                        Colors.YELLOW if self.in_italic else main_color,
+                        end="",
+                        flush=True,
+                    )
                     self.pending_stars = 0
 
             if char == "\n":
                 self.flush()
                 print(f"\n{self.indent}    ", end="", flush=True)
                 # Re-apply active color
-                c = Colors.DIM if self.is_reasoning else Colors.GREEN if self.in_code else Colors.CYAN if self.in_bold else Colors.YELLOW if self.in_italic else main_color
+                c = (
+                    Colors.DIM
+                    if self.is_reasoning
+                    else Colors.GREEN
+                    if self.in_code
+                    else Colors.CYAN
+                    if self.in_bold
+                    else Colors.YELLOW
+                    if self.in_italic
+                    else main_color
+                )
                 print(c, end="", flush=True)
                 self.current_line_len = 0
             else:
                 self.word_buf += char
-                if char == " ": self.flush()
+                if char == " ":
+                    self.flush()
 
     def flush(self):
-        if not self.word_buf: return
+        if not self.word_buf:
+            return
         vlen = visible_len(self.word_buf)
         if self.current_line_len + vlen > self.width - 4:
             print(f"\n{self.indent}    ", end="", flush=True)

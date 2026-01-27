@@ -27,13 +27,11 @@ import mimi_lib.tools.web_tools
 import mimi_lib.tools.memory_tools
 import mimi_lib.tools.note_tools
 import mimi_lib.tools.vision_tools
-import mimi_lib.tools.git_tools
 import mimi_lib.tools.skill_tools
 import mimi_lib.tools.research_tools
 import mimi_lib.tools.bash_tools
 from mimi_lib.tools.registry import get_tool_definitions, execute_tool
 from mimi_lib.tools.skill_tools import get_current_skill_content, get_active_skill_name
-from mimi_lib.tools.git_tools import sync_vault
 
 from mimi_lib.ui.session import SessionSelector
 
@@ -47,7 +45,7 @@ class MimiApp:
         self.history: List[Dict[str, Any]] = []
         self.cur_model = "deepseek-reasoner"
         self.smart_mode = True  # Default to Intelligent Routing
-        self.active_turn_model = self.cur_model # Track resolved model for UI
+        self.active_turn_model = self.cur_model  # Track resolved model for UI
         self.search_active = False
         self.thinking_mode = False
         self.autorename = True
@@ -139,36 +137,70 @@ class MimiApp:
                 ctx += f"- {f}\n"
 
         return ctx
-        
+
     def _resolve_model(self, user_input: str) -> str:
         """Intelligently routes between Instant (chat) and Reasoning models."""
         if not self.smart_mode:
             return self.cur_model
-            
+
         active_skill = get_active_skill_name()
-        
+
         # 1. Skill-Based Routing
-        instant_skills = ["counsellor", "companion", "telegram_curator", "productivity_master", "cli_wizard"]
-        reasoning_skills = ["engineering", "software_architect", "researcher", "academic_strategist", "latex_wizard"]
-        
+        instant_skills = [
+            "counsellor",
+            "companion",
+            "telegram_curator",
+            "productivity_master",
+            "cli_wizard",
+        ]
+        reasoning_skills = [
+            "engineering",
+            "software_architect",
+            "researcher",
+            "academic_strategist",
+            "latex_wizard",
+        ]
+
         if active_skill in instant_skills:
             return "deepseek-chat"
         if active_skill in reasoning_skills:
             return "deepseek-reasoner"
-            
+
         # 2. Heuristic Fallback (No Skill)
         text = user_input.lower()
-        
+
         # Explicit Reasoning Triggers
-        reasoning_keywords = ["solve", "calculate", "prove", "analyze", "code", "refactor", "debug", "plan", "derive", "why"]
+        reasoning_keywords = [
+            "solve",
+            "calculate",
+            "prove",
+            "analyze",
+            "code",
+            "refactor",
+            "debug",
+            "plan",
+            "derive",
+            "why",
+        ]
         if any(w in text for w in reasoning_keywords) or len(text.split()) > 20:
-             return "deepseek-reasoner"
-             
+            return "deepseek-reasoner"
+
         # Explicit Instant Triggers
-        instant_keywords = ["hi", "hello", "hey", "thanks", "ok", "cool", "list", "what is", "who is", "help"]
+        instant_keywords = [
+            "hi",
+            "hello",
+            "hey",
+            "thanks",
+            "ok",
+            "cool",
+            "list",
+            "what is",
+            "who is",
+            "help",
+        ]
         if any(text.startswith(w) for w in instant_keywords):
             return "deepseek-chat"
-            
+
         # Default to Reasoning for safety/capability, or Chat for speed?
         # Given "Instant" preference, we bias towards chat for short queries.
         return "deepseek-chat"
@@ -269,8 +301,8 @@ class MimiApp:
             ).start()
 
     def _run_background_sync(self, msg: str):
-        # Quiet sync
-        sync_vault(msg)
+        # Git sync disabled
+        pass
 
     def _summarize_history(self):
         """Compresses old history into the session chronicle."""
@@ -323,7 +355,7 @@ class MimiApp:
         now = datetime.now().strftime("%H:%M")
         s_text = "[W:ON]" if self.search_active else "[W:OFF]"
         # t_text = "[T:ON]" if self.thinking_mode else "[T:OFF]"
-        
+
         # Model Indicator
         model_short = "THINK" if "reasoner" in self.active_turn_model else "FAST"
         m_text = f"[M:{model_short}]"
@@ -406,21 +438,23 @@ class MimiApp:
             print(f"{indent}  /clear          - Clear screen")
             print(f"{indent}  /exit           - Quit")
         elif cmd[0] == "/prep":
-            self.history.append({
-                "role": "user",
-                "content": (
-                    "Execute the 'git_pull_lecture_guides' routine as defined in "
-                    "[[Mimi/Sessions/git_pull_lecture_guides.md]].\n\n"
-                    "CRITICAL: Start by using 'load_skill' for 'git_master' to sync. "
-                    "Follow the steps exactly:\n"
-                    "1. Load 'git_master' -> 'sync_vault' (pull).\n"
-                    "2. Identify the new lecture folder and read raw materials.\n"
-                    "3. Load 'academic_strategist' and 'latex_wizard' -> Create first principles guides with Obsidian-perfect LaTeX.\n"
-                    "4. Load 'productivity_master' -> Setup tomorrow's daily note based on today's note and tutorial deadlines in memory.\n"
-                    "5. Load 'telegram_curator' -> Prepare community posts if applicable.\n"
-                    "6. Sync back."
-                )
-            })
+            self.history.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Execute the 'git_pull_lecture_guides' routine as defined in "
+                        "[[Mimi/Sessions/git_pull_lecture_guides.md]].\n\n"
+                        "CRITICAL: Start by using 'load_skill' for 'git_master' to sync. "
+                        "Follow the steps exactly:\n"
+                        "1. Load 'git_master' -> 'sync_vault' (pull).\n"
+                        "2. Identify the new lecture folder and read raw materials.\n"
+                        "3. Load 'academic_strategist' and 'latex_wizard' -> Create first principles guides with Obsidian-perfect LaTeX.\n"
+                        "4. Load 'productivity_master' -> Setup tomorrow's daily note based on today's note and tutorial deadlines in memory.\n"
+                        "5. Load 'telegram_curator' -> Prepare community posts if applicable.\n"
+                        "6. Sync back."
+                    ),
+                }
+            )
             self.generate_response(get_layout(self.config)[0], indent)
         elif cmd[0] == "/autorename":
             if len(cmd) > 1:
@@ -568,7 +602,7 @@ class MimiApp:
         # Skill Heuristic Check
         messages_to_send = list(self.history)
         active_skill = get_active_skill_name()
-        
+
         content = ""
         if self.history and self.history[-1]["role"] == "user":
             content = self.history[-1]["content"].lower()
@@ -577,27 +611,104 @@ class MimiApp:
         self.active_turn_model = self._resolve_model(content)
 
         triggers = {
-            "software_architect": ["refactor", "code", "class", "function", "api", "impl", "bug", "fix"],
+            "software_architect": [
+                "refactor",
+                "code",
+                "class",
+                "function",
+                "api",
+                "impl",
+                "bug",
+                "fix",
+            ],
             "researcher": ["research", "find", "search", "investigate", "summary"],
             "cli_wizard": ["bash", "linux", "terminal", "script", "install", "env"],
-            "git_master": ["git", "sync", "push", "pull", "commit", "branch", "conflict"],
+            "git_master": [
+                "git",
+                "sync",
+                "push",
+                "pull",
+                "commit",
+                "branch",
+                "conflict",
+            ],
             "obsidian_expert": ["vault", "note", "obsidian", "link", "markdown"],
-            "engineering": ["math", "physics", "chemistry", "stem", "tutorial", "latex"],
-            "academic_strategist": ["anki", "flashcard", "recall", "exam", "quiz", "strategy", "lecture guide"],
-            "productivity_master": ["schedule", "deadline", "priority", "todo", "tutorial", "daily note"],
-            "telegram_curator": ["telegram", "channel", "post", "share", "community", "pasum notes"],
-            "latex_wizard": ["equation", "formula", "derivation", "align", "typeset", "mathjax"],
-            "counsellor": ["sad", "depressed", "anxious", "stress", "tired", "burnout", "vent", "cry", "feel", "worry", "hopeless"],
-            "companion": ["let's play", "roleplay", "pretend", "hang out", "bored", "coffee", "gossip", "movie", "game"],
+            "engineering": [
+                "math",
+                "physics",
+                "chemistry",
+                "stem",
+                "tutorial",
+                "latex",
+            ],
+            "academic_strategist": [
+                "anki",
+                "flashcard",
+                "recall",
+                "exam",
+                "quiz",
+                "strategy",
+                "lecture guide",
+            ],
+            "productivity_master": [
+                "schedule",
+                "deadline",
+                "priority",
+                "todo",
+                "tutorial",
+                "daily note",
+            ],
+            "telegram_curator": [
+                "telegram",
+                "channel",
+                "post",
+                "share",
+                "community",
+                "pasum notes",
+            ],
+            "latex_wizard": [
+                "equation",
+                "formula",
+                "derivation",
+                "align",
+                "typeset",
+                "mathjax",
+            ],
+            "counsellor": [
+                "sad",
+                "depressed",
+                "anxious",
+                "stress",
+                "tired",
+                "burnout",
+                "vent",
+                "cry",
+                "feel",
+                "worry",
+                "hopeless",
+            ],
+            "companion": [
+                "let's play",
+                "roleplay",
+                "pretend",
+                "hang out",
+                "bored",
+                "coffee",
+                "gossip",
+                "movie",
+                "game",
+            ],
         }
-        
-        relevant_skills = [s for s, kws in triggers.items() if any(kw in content for kw in kws)]
-        
+
+        relevant_skills = [
+            s for s, kws in triggers.items() if any(kw in content for kw in kws)
+        ]
+
         if relevant_skills:
             if not active_skill:
                 # Special prompt for Soft Skills
                 if "counsellor" in relevant_skills:
-                     hint = (
+                    hint = (
                         f"** SKILL ADVISORY **\n"
                         f"It seems you are expressing strong emotions. "
                         f"Mimi has a 'counsellor' skill designed for supportive listening. "
@@ -619,9 +730,12 @@ class MimiApp:
                     )
                 messages_to_send.append({"role": "system", "content": hint})
             elif active_skill not in relevant_skills:
-                 # Don't nag if compatible (e.g. companion and counsellor are both soft)
-                 soft_skills = ["companion", "counsellor"]
-                 if not (active_skill in soft_skills and any(s in soft_skills for s in relevant_skills)):
+                # Don't nag if compatible (e.g. companion and counsellor are both soft)
+                soft_skills = ["companion", "counsellor"]
+                if not (
+                    active_skill in soft_skills
+                    and any(s in soft_skills for s in relevant_skills)
+                ):
                     hint = (
                         f"** SKILL ADVISORY **\n"
                         f"You are currently using '{active_skill}', but the task seems to involve '{', '.join(relevant_skills)}'. "
@@ -631,28 +745,41 @@ class MimiApp:
 
         while True:
             printer = StreamPrinter(width, indent, "Mimi")
-            
+
             # --- TOOL FILTERING FOR SOFT SKILLS ---
             all_tools = get_tool_definitions()
             tools_to_use = all_tools
-            
+
             soft_skills = ["counsellor", "companion"]
-            
+
             if active_skill in soft_skills:
                 # Allowed: Memory, Vault, Notes, Skill management + Web (for companion)
                 allowed_tools = [
-                    "load_skill", "unload_skill", "list_skills", 
-                    "add_memory", "search_memory", "vault_search", "vault_query",
-                    "add_note", "delete_note"
+                    "load_skill",
+                    "unload_skill",
+                    "list_skills",
+                    "add_memory",
+                    "search_memory",
+                    "vault_search",
+                    "vault_query",
+                    "add_note",
+                    "delete_note",
                 ]
                 if active_skill == "companion":
-                    allowed_tools.extend(["web_search", "describe_image"]) # Companion can look up memes/images
-                
-                tools_to_use = [t for t in all_tools if t["function"]["name"] in allowed_tools]
+                    allowed_tools.extend(
+                        ["web_search", "describe_image"]
+                    )  # Companion can look up memes/images
+
+                tools_to_use = [
+                    t for t in all_tools if t["function"]["name"] in allowed_tools
+                ]
 
             # Call API with resolved model
             response = call_api(
-                messages_to_send, model=self.active_turn_model, stream=True, tools=tools_to_use
+                messages_to_send,
+                model=self.active_turn_model,
+                stream=True,
+                tools=tools_to_use,
             )
             if not response:
                 break
@@ -782,8 +909,6 @@ class MimiApp:
             "list_directory": "Checking what's inside this folder... 📁",
             "search_files": "Looking for that specific file... 🔎",
             "get_codebase_index": "Getting a bird's eye view of the code! 🗺️",
-            "sync_vault": "Syncing our vault with GitHub to keep everything safe! ☁️",
-            "check_git_status": "Checking the status of our repository... 🌿",
             "describe_image": "Taking a look at this image... 👁️",
             "load_skill": "Putting on my expert hat! 🧢",
             "unload_skill": "Taking off the expert hat, just being me again! 🎀",
@@ -810,13 +935,6 @@ class MimiApp:
             if str(content).startswith("Error"):
                 with self.print_lock:
                     print(f"{indent}{Colors.RED}!! Oh no! {content}{Colors.RESET}")
-
-                # Special Hint for Git/Sync Issues
-                if (
-                    name in ["sync_vault", "check_git_status"]
-                    or "git" in str(content).lower()
-                ):
-                    content = f"{content}\n\n[Mimi System Hint: Sync/Git failure detected. Consider loading 'git_master' skill to resolve this with local priority.]"
 
             return {
                 "role": "tool",
@@ -873,7 +991,8 @@ class MimiApp:
                         rem += f"- [Vault] {content}\n"
                         seen_contents.add(content)
                         found = True
-            except: pass
+            except:
+                pass
 
             # 2. Semantic Search (Session Memory)
             try:
@@ -884,7 +1003,8 @@ class MimiApp:
                         rem += f"- [Intuition] {content}\n"
                         seen_contents.add(content)
                         found = True
-            except: pass
+            except:
+                pass
 
             # 3. Literal Search (Keyword)
             try:
@@ -895,7 +1015,8 @@ class MimiApp:
                         rem += f"- [Recall] {content}\n"
                         seen_contents.add(content)
                         found = True
-            except: pass
+            except:
+                pass
 
         return rem if found else ""
 

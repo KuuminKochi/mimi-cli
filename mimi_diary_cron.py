@@ -37,13 +37,13 @@ try:
         SESSION_DIR,
         DIARY_STORE_FILE,
         MEMORY_STORE_FILE,
-        get_config
+        get_config,
     )
     from mimi_lib.memory.brain import (
         load_system_prompt,
         save_memory,
         load_diary,
-        save_diary_entry
+        save_diary_entry,
     )
     from mimi_lib.api.provider import call_api
 except ImportError as e:
@@ -52,6 +52,7 @@ except ImportError as e:
 
 # Legacy Jan Threads Path
 THREADS_DIR = "/home/kuumin/.var/app/ai.jan.Jan/data/Jan/data/threads"
+
 
 def parse_session_file(filepath: str) -> List[Dict[str, any]]:
     messages = []
@@ -91,6 +92,7 @@ def parse_session_file(filepath: str) -> List[Dict[str, any]]:
 
     return messages
 
+
 def get_messages_from_sessions(target_date: str) -> Tuple[List[str], List[str]]:
     user_msgs = []
     assistant_msgs = []
@@ -122,6 +124,7 @@ def get_messages_from_sessions(target_date: str) -> Tuple[List[str], List[str]]:
 
     return user_msgs, assistant_msgs
 
+
 def get_messages_from_threads(target_date: str) -> Tuple[List[str], List[str]]:
     user_msgs = []
     assistant_msgs = []
@@ -133,15 +136,19 @@ def get_messages_from_threads(target_date: str) -> Tuple[List[str], List[str]]:
         for tf in glob.glob(os.path.join(THREADS_DIR, "*/messages.jsonl")):
             with open(tf, "r", encoding="utf-8") as f:
                 for line in f:
-                    if not line.strip(): continue
+                    if not line.strip():
+                        continue
                     try:
                         msg = json.loads(line)
                         ts = msg.get("created_at") or msg.get("timestamp")
-                        if not ts: continue
-                        if ts > 1000000000000: ts = ts / 1000
-                        
+                        if not ts:
+                            continue
+                        if ts > 1000000000000:
+                            ts = ts / 1000
+
                         msg_date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-                        if msg_date != target_date: continue
+                        if msg_date != target_date:
+                            continue
 
                         content = ""
                         msg_content = msg.get("content")
@@ -153,15 +160,19 @@ def get_messages_from_threads(target_date: str) -> Tuple[List[str], List[str]]:
                             content = msg_content
 
                         role = msg.get("role")
-                        if role == "user": user_msgs.append(content)
-                        elif role == "assistant": assistant_msgs.append(content)
+                        if role == "user":
+                            user_msgs.append(content)
+                        elif role == "assistant":
+                            assistant_msgs.append(content)
 
-                    except: continue
+                    except:
+                        continue
 
     except Exception as e:
         logger.error(f"Error reading threads: {e}")
 
     return user_msgs, assistant_msgs
+
 
 def get_all_chat_dates() -> Set[str]:
     dates = set()
@@ -179,25 +190,33 @@ def get_all_chat_dates() -> Set[str]:
             for tf in glob.glob(os.path.join(THREADS_DIR, "*/messages.jsonl")):
                 with open(tf, "r", encoding="utf-8") as f:
                     for line in f:
-                        if not line.strip(): continue
+                        if not line.strip():
+                            continue
                         try:
                             msg = json.loads(line)
                             ts = msg.get("created_at") or msg.get("timestamp")
                             if ts:
-                                if ts > 1000000000000: ts = ts / 1000
-                                dates.add(datetime.fromtimestamp(ts).strftime("%Y-%m-%d"))
-                        except: continue
+                                if ts > 1000000000000:
+                                    ts = ts / 1000
+                                dates.add(
+                                    datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                                )
+                        except:
+                            continue
         except Exception as e:
             logger.error(f"Error scanning threads: {e}")
     return dates
 
-def interleave_messages(user_msgs: List[str], assistant_msgs: List[str]) -> List[Dict[str, str]]:
+
+def interleave_messages(
+    user_msgs: List[str], assistant_msgs: List[str]
+) -> List[Dict[str, str]]:
     conversation = []
     max_len = min(len(user_msgs), len(assistant_msgs))
     for i in range(max_len):
         conversation.append({"role": "user", "content": user_msgs[i]})
         conversation.append({"role": "assistant", "content": assistant_msgs[i]})
-    
+
     # Append extras
     for i in range(max_len, len(user_msgs)):
         conversation.append({"role": "user", "content": user_msgs[i]})
@@ -205,18 +224,23 @@ def interleave_messages(user_msgs: List[str], assistant_msgs: List[str]) -> List
         conversation.append({"role": "assistant", "content": assistant_msgs[i]})
     return conversation
 
-def generate_diary_entry(target_date: str, user_msgs: List[str], assistant_msgs: List[str]) -> Optional[str]:
+
+def generate_diary_entry(
+    target_date: str, user_msgs: List[str], assistant_msgs: List[str]
+) -> Optional[str]:
     conversation = interleave_messages(user_msgs, assistant_msgs)
-    if not conversation: return None
+    if not conversation:
+        return None
 
     context_parts = []
     total_len = 0
     for msg in reversed(conversation):
         msg_text = f"{msg['role'].title()}: {msg['content']}"
-        if total_len + len(msg_text) > 5000: break
+        if total_len + len(msg_text) > 5000:
+            break
         context_parts.insert(0, msg_text)
         total_len += len(msg_text)
-    
+
     context = "\n".join(context_parts)
     system_prompt = load_system_prompt()
     if not system_prompt:
@@ -231,9 +255,12 @@ Start with "Dear Diary,". Keep it under 300 words."""
     try:
         logger.info(f"Generating diary for {target_date}...")
         res = call_api(
-            [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
             model="deepseek-reasoner",
-            stream=False
+            stream=False,
         )
         if res and res.status_code == 200:
             content = res.json()["choices"][0]["message"]["content"]
@@ -245,11 +272,12 @@ Start with "Dear Diary,". Keep it under 300 words."""
         logger.error(f"Error generating diary: {e}")
         return None
 
+
 def process_date(target_date: str):
     logger.info(f"Processing: {target_date}")
     u1, a1 = get_messages_from_sessions(target_date)
     u2, a2 = get_messages_from_threads(target_date)
-    
+
     # Merge, prioritize sessions
     user_msgs = u1 + [m for m in u2 if m not in u1]
     assistant_msgs = a1 + [m for m in a2 if m not in a1]
@@ -268,19 +296,24 @@ def process_date(target_date: str):
         save_memory(f"Diary Entry ({target_date}): {diary_content}", category="Mimi")
         logger.info("Added diary reflection to memory.")
 
+
 def main():
     logger.info("=== Mimi Diary Cron (Modular) ===")
     all_dates = get_all_chat_dates()
-    if not all_dates: return
+    if not all_dates:
+        return
 
     diary_store = load_diary()
     existing_dates = set(entry.get("date") for entry in diary_store)
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    targets = [d for d in sorted(all_dates) if d not in existing_dates or d == today_str]
-    
+    targets = [
+        d for d in sorted(all_dates) if d not in existing_dates or d == today_str
+    ]
+
     for date_str in targets:
         process_date(date_str)
+
 
 if __name__ == "__main__":
     main()

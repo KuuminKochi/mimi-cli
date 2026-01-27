@@ -27,13 +27,11 @@ import mimi_lib.tools.web_tools
 import mimi_lib.tools.memory_tools
 import mimi_lib.tools.note_tools
 import mimi_lib.tools.vision_tools
-import mimi_lib.tools.git_tools
 import mimi_lib.tools.skill_tools
 import mimi_lib.tools.research_tools
 import mimi_lib.tools.bash_tools
 from mimi_lib.tools.registry import get_tool_definitions, execute_tool
 from mimi_lib.tools.skill_tools import get_current_skill_content, get_active_skill_name
-from mimi_lib.tools.git_tools import sync_vault
 
 from mimi_lib.ui.session import SessionSelector
 
@@ -234,8 +232,8 @@ class MimiApp:
             ).start()
 
     def _run_background_sync(self, msg: str):
-        # Quiet sync
-        sync_vault(msg)
+        # Git sync disabled
+        pass
 
     def _summarize_history(self):
         """Compresses old history into the session chronicle."""
@@ -367,21 +365,23 @@ class MimiApp:
             print(f"{indent}  /clear          - Clear screen")
             print(f"{indent}  /exit           - Quit")
         elif cmd[0] == "/prep":
-            self.history.append({
-                "role": "user",
-                "content": (
-                    "Execute the 'git_pull_lecture_guides' routine as defined in "
-                    "[[Mimi/Sessions/git_pull_lecture_guides.md]].\n\n"
-                    "CRITICAL: Start by using 'load_skill' for 'git_master' to sync. "
-                    "Follow the steps exactly:\n"
-                    "1. Load 'git_master' -> 'sync_vault' (pull).\n"
-                    "2. Identify the new lecture folder and read raw materials.\n"
-                    "3. Load 'academic_strategist' and 'latex_wizard' -> Create first principles guides with Obsidian-perfect LaTeX.\n"
-                    "4. Load 'productivity_master' -> Setup tomorrow's daily note based on today's note and tutorial deadlines in memory.\n"
-                    "5. Load 'telegram_curator' -> Prepare community posts if applicable.\n"
-                    "6. Sync back."
-                )
-            })
+            self.history.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Execute the 'git_pull_lecture_guides' routine as defined in "
+                        "[[Mimi/Sessions/git_pull_lecture_guides.md]].\n\n"
+                        "CRITICAL: Start by using 'load_skill' for 'git_master' to sync. "
+                        "Follow the steps exactly:\n"
+                        "1. Load 'git_master' -> 'sync_vault' (pull).\n"
+                        "2. Identify the new lecture folder and read raw materials.\n"
+                        "3. Load 'academic_strategist' and 'latex_wizard' -> Create first principles guides with Obsidian-perfect LaTeX.\n"
+                        "4. Load 'productivity_master' -> Setup tomorrow's daily note based on today's note and tutorial deadlines in memory.\n"
+                        "5. Load 'telegram_curator' -> Prepare community posts if applicable.\n"
+                        "6. Sync back."
+                    ),
+                }
+            )
             self.generate_response(get_layout(self.config)[0], indent)
         elif cmd[0] == "/autorename":
             if len(cmd) > 1:
@@ -526,26 +526,81 @@ class MimiApp:
         # Skill Heuristic Check
         messages_to_send = list(self.history)
         active_skill = get_active_skill_name()
-        
+
         content = ""
         if self.history and self.history[-1]["role"] == "user":
             content = self.history[-1]["content"].lower()
 
         triggers = {
-            "software_architect": ["refactor", "code", "class", "function", "api", "impl", "bug", "fix"],
+            "software_architect": [
+                "refactor",
+                "code",
+                "class",
+                "function",
+                "api",
+                "impl",
+                "bug",
+                "fix",
+            ],
             "researcher": ["research", "find", "search", "investigate", "summary"],
             "cli_wizard": ["bash", "linux", "terminal", "script", "install", "env"],
-            "git_master": ["git", "sync", "push", "pull", "commit", "branch", "conflict"],
+            "git_master": [
+                "git",
+                "sync",
+                "push",
+                "pull",
+                "commit",
+                "branch",
+                "conflict",
+            ],
             "obsidian_expert": ["vault", "note", "obsidian", "link", "markdown"],
-            "engineering": ["math", "physics", "chemistry", "stem", "tutorial", "latex"],
-            "academic_strategist": ["anki", "flashcard", "recall", "exam", "quiz", "strategy", "lecture guide"],
-            "productivity_master": ["schedule", "deadline", "priority", "todo", "tutorial", "daily note"],
-            "telegram_curator": ["telegram", "channel", "post", "share", "community", "pasum notes"],
-            "latex_wizard": ["equation", "formula", "derivation", "align", "typeset", "mathjax"],
+            "engineering": [
+                "math",
+                "physics",
+                "chemistry",
+                "stem",
+                "tutorial",
+                "latex",
+            ],
+            "academic_strategist": [
+                "anki",
+                "flashcard",
+                "recall",
+                "exam",
+                "quiz",
+                "strategy",
+                "lecture guide",
+            ],
+            "productivity_master": [
+                "schedule",
+                "deadline",
+                "priority",
+                "todo",
+                "tutorial",
+                "daily note",
+            ],
+            "telegram_curator": [
+                "telegram",
+                "channel",
+                "post",
+                "share",
+                "community",
+                "pasum notes",
+            ],
+            "latex_wizard": [
+                "equation",
+                "formula",
+                "derivation",
+                "align",
+                "typeset",
+                "mathjax",
+            ],
         }
-        
-        relevant_skills = [s for s, kws in triggers.items() if any(kw in content for kw in kws)]
-        
+
+        relevant_skills = [
+            s for s, kws in triggers.items() if any(kw in content for kw in kws)
+        ]
+
         if relevant_skills:
             if not active_skill:
                 hint = (
@@ -698,8 +753,6 @@ class MimiApp:
             "list_directory": "Checking what's inside this folder... 📁",
             "search_files": "Looking for that specific file... 🔎",
             "get_codebase_index": "Getting a bird's eye view of the code! 🗺️",
-            "sync_vault": "Syncing our vault with GitHub to keep everything safe! ☁️",
-            "check_git_status": "Checking the status of our repository... 🌿",
             "describe_image": "Taking a look at this image... 👁️",
             "load_skill": "Putting on my expert hat! 🧢",
             "unload_skill": "Taking off the expert hat, just being me again! 🎀",
@@ -726,13 +779,6 @@ class MimiApp:
             if str(content).startswith("Error"):
                 with self.print_lock:
                     print(f"{indent}{Colors.RED}!! Oh no! {content}{Colors.RESET}")
-
-                # Special Hint for Git/Sync Issues
-                if (
-                    name in ["sync_vault", "check_git_status"]
-                    or "git" in str(content).lower()
-                ):
-                    content = f"{content}\n\n[Mimi System Hint: Sync/Git failure detected. Consider loading 'git_master' skill to resolve this with local priority.]"
 
             return {
                 "role": "tool",

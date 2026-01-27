@@ -34,23 +34,25 @@ def load_system_prompt():
         LOCAL_PROMPT_FILE.write_text(content, encoding="utf-8")
     elif LOCAL_PROMPT_FILE.exists():
         content = LOCAL_PROMPT_FILE.read_text(encoding="utf-8")
-    
+
     # Inject Persona
     persona = ""
     if PERSONA_CORE_FILE.exists():
         try:
             data = json.loads(PERSONA_CORE_FILE.read_text())
             persona = f"**Identity Narrative:**\n{data.get('narrative', '')}\n\n"
-        except: pass
-        
+        except:
+            pass
+
     now = datetime.now()
     temporal = f"**Temporal Context:**\n- Date: {now.strftime('%A, %b %d, %Y')}\n- Time: {now.strftime('%H:%M')}\n\n"
-    
+
     # Template Substitution
     content = content.replace("{{user}}", "Kuumin")
-    content = content.replace("{{current_date}}", now.strftime('%A, %b %d, %Y'))
-    
+    content = content.replace("{{current_date}}", now.strftime("%A, %b %d, %Y"))
+
     return persona + temporal + content
+
 
 def get_literal_matches(query: str, top_k: int = 2):
     if not MEMORY_ARCHIVE_FILE.exists():
@@ -60,20 +62,22 @@ def get_literal_matches(query: str, top_k: int = 2):
         stop_words = {"about", "there", "their", "would", "could", "should"}
         words = re.findall(r"\b\w{5,}\b", query.lower())
         keywords = [w for w in words if w not in stop_words]
-        
-        if not keywords: return []
-        
+
+        if not keywords:
+            return []
+
         matches = []
         for item in archive:
             content = item.get("content", "").lower()
             score = sum(1 for kw in keywords if kw in content)
             if score > 0:
                 matches.append((score, item))
-        
+
         matches.sort(key=lambda x: x[0], reverse=True)
         return [m[1] for m in matches[:top_k]]
     except:
         return []
+
 
 def save_memory(content, category="Kuumin"):
     archive = load_json(MEMORY_ARCHIVE_FILE)

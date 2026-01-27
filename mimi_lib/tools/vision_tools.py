@@ -4,17 +4,15 @@ import os
 from mimi_lib.tools.registry import register_tool
 from mimi_lib.config import get_config
 
+
 @register_tool(
     "describe_image",
     "Analyze an image using a vision model.",
     {
-        "type": "object", 
-        "properties": {
-            "image_path": {"type": "string"},
-            "prompt": {"type": "string"}
-        },
-        "required": ["image_path"]
-    }
+        "type": "object",
+        "properties": {"image_path": {"type": "string"}, "prompt": {"type": "string"}},
+        "required": ["image_path"],
+    },
 )
 def describe_image(image_path: str, prompt: str = "Describe this image in detail."):
     config = get_config()
@@ -40,7 +38,9 @@ def describe_image(image_path: str, prompt: str = "Describe this image in detail
                         {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
                         },
                     ],
                 }
@@ -49,7 +49,9 @@ def describe_image(image_path: str, prompt: str = "Describe this image in detail
             "temperature": 0.5,
         }
 
-        res = requests.post("https://api.x.ai/v1/chat/completions", headers=headers, json=payload)
+        res = requests.post(
+            "https://api.x.ai/v1/chat/completions", headers=headers, json=payload
+        )
         if res.status_code != 200:
             return f"Vision API Error: {res.text}"
         return res.json()["choices"][0]["message"]["content"]

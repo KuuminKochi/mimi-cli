@@ -41,7 +41,7 @@ _manager = SkillManager(SKILLS_DIR)
 def load_skill(name: str) -> str:
     if _manager.load_skill(name):
         res = f"Skill '{name}' loaded successfully. I am now ready!"
-        
+
         # TURBO: Fused Initialization - Auto-search memory for relevant preferences
         queries = {
             "latex_wizard": "LaTeX preferences mathematical notation style",
@@ -56,33 +56,35 @@ def load_skill(name: str) -> str:
             "counsellor": "Emotional support preferences self-reflection therapeutic style",
             "companion": "Inside jokes hobbies favorite foods friendship dynamics",
         }
-        
+
         query = queries.get(name)
         if query:
             init_data = "\n\n**Fused Initialization (Memory Discovery):**\n"
             found = False
-            
+
             # 1. Vault Search
             try:
                 vault_res = search_vault(query, top_k=2)
                 for r in vault_res:
                     init_data += f"- [Vault] {r['path']}: {r['text'][:300]}\n"
                     found = True
-            except: pass
-            
+            except:
+                pass
+
             # 2. Session Memory Search
             try:
                 mem_res = semantic_search(query, top_k=2)
                 for r in mem_res:
                     init_data += f"- [Memory] {r['content']}\n"
                     found = True
-            except: pass
-            
+            except:
+                pass
+
             if found:
                 res += init_data
             else:
                 res += "\n\n(No specific preferences found in memory for this skill. I will use my default expert protocols.)"
-                
+
         return res
     return f"Error: Skill '{name}' not found. Available: {_manager.list_skills()}"
 
