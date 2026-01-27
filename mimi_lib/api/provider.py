@@ -8,7 +8,7 @@ _cache = {}
 
 
 def call_api(
-    messages, model="deepseek-reasoner", stream=True, tools=None, response_format=None
+    messages, model="deepseek-chat", stream=True, tools=None, response_format=None
 ):
     config = get_config()
 

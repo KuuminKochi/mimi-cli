@@ -43,7 +43,7 @@ class MimiApp:
     def __init__(self):
         self.config = get_config()
         self.history: List[Dict[str, Any]] = []
-        self.cur_model = "deepseek-reasoner"
+        self.cur_model = "deepseek-chat"
         self.smart_mode = True  # Default to Intelligent Routing
         self.active_turn_model = self.cur_model  # Track resolved model for UI
         self.search_active = False
@@ -169,20 +169,19 @@ class MimiApp:
         # 2. Heuristic Fallback (No Skill)
         text = user_input.lower()
 
-        # Explicit Reasoning Triggers
-        reasoning_keywords = [
-            "solve",
-            "calculate",
-            "prove",
-            "analyze",
-            "code",
-            "refactor",
-            "debug",
-            "plan",
-            "derive",
-            "why",
+        # Explicit Reasoning Triggers - Very Strict
+        # Only triggers on explicit reasoning requests
+        explicit_reasoning_phrases = [
+            "step by step",
+            "think through",
+            "reason about",
+            "work out",
+            "carefully analyze",
+            "explain your reasoning",
+            "show your work",
         ]
-        if any(w in text for w in reasoning_keywords) or len(text.split()) > 20:
+
+        if any(phrase in text for phrase in explicit_reasoning_phrases):
             return "deepseek-reasoner"
 
         # Explicit Instant Triggers
@@ -201,8 +200,7 @@ class MimiApp:
         if any(text.startswith(w) for w in instant_keywords):
             return "deepseek-chat"
 
-        # Default to Reasoning for safety/capability, or Chat for speed?
-        # Given "Instant" preference, we bias towards chat for short queries.
+        # Default to Chat for speed and efficiency
         return "deepseek-chat"
 
     def run(self):
