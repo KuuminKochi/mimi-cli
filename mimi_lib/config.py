@@ -53,3 +53,19 @@ def get_config():
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
         ),
     }
+
+
+AVAILABLE_MODELS = {
+    "deepseek-chat": {
+        "provider": "deepseek",
+        "description": "Fast conversational model",
+    },
+    "deepseek-reasoner": {
+        "provider": "deepseek",
+        "description": "Chain-of-thought reasoning model",
+    },
+    "or/moonshotai/kimi-k2.5": {
+        "provider": "openrouter",
+        "description": "Moonshot AI multimodal model with agent capabilities",
+    },
+}

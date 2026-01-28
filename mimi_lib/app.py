@@ -430,7 +430,7 @@ class MimiApp:
             print(f"{indent}  /thinking       - Toggle Thinking Mode")
             print(f"{indent}  /new            - Start fresh session")
             print(f"{indent}  /regen          - Regenerate last response")
-            print(f"{indent}  /model [name]   - Switch base AI model")
+            print(f"{indent}  /model [name]   - List or switch AI model")
             print(f"{indent}  /autorename     - Toggle auto-renaming")
             print(f"{indent}  /prep           - Run 'git_pull_lecture_guides' routine")
             print(f"{indent}  /clear          - Clear screen")
@@ -484,9 +484,10 @@ class MimiApp:
             self.smart_mode = not self.smart_mode
             print(f"{indent}Smart Routing: {'ON' if self.smart_mode else 'OFF'}")
         elif cmd[0] == "/model":
-            if len(cmd) > 1:
-                self.cur_model = cmd[1]
-                print(f"{indent}Switched base model to: {self.cur_model}")
+            if len(cmd) == 1:
+                self._list_models(indent)
+            else:
+                self._switch_model(cmd[1], indent)
         elif cmd[0] == "/new":
             self.session_file = (
                 f"Session_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.md"
@@ -595,6 +596,43 @@ class MimiApp:
 
         except Exception as e:
             pass  # Fail silently for auto-rename
+
+    def _list_models(self, indent):
+        """Display available models with descriptions."""
+        from mimi_lib.config import AVAILABLE_MODELS
+
+        print(f"{indent}Available Models:")
+        print(f"{indent}{'─' * 50}")
+
+        for model_id, info in AVAILABLE_MODELS.items():
+            marker = (
+                f"{Colors.GREEN}[ACTIVE]{Colors.RESET}"
+                if model_id == self.cur_model
+                else "       "
+            )
+            provider = info["provider"].upper()
+            desc = info["description"]
+            print(f"{indent}  {marker} {model_id}")
+            print(
+                f"{indent}          {Colors.DIM}Provider: {provider} | {desc}{Colors.RESET}"
+            )
+
+    def _switch_model(self, model_arg, indent):
+        """Switch to specified model, disabling smart routing."""
+        if self.smart_mode:
+            self.smart_mode = False
+            print(
+                f"{indent}{Colors.YELLOW}Smart routing disabled for manual model selection{Colors.RESET}\n"
+            )
+
+        self.cur_model = model_arg
+        print(f"{indent}Switched base model to: {Colors.CYAN}{model_arg}{Colors.RESET}")
+
+        from mimi_lib.config import AVAILABLE_MODELS
+
+        if model_arg in AVAILABLE_MODELS:
+            desc = AVAILABLE_MODELS[model_arg]["description"]
+            print(f"{indent}  {Colors.DIM}({desc}){Colors.RESET}")
 
     def generate_response(self, width, indent):
         # Skill Heuristic Check
