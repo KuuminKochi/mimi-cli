@@ -1,6 +1,7 @@
 import json
 import requests
 from mimi_lib.config import get_config
+from mimi_lib.api.generic import call_generic_api
 
 # Global Session for persistent connections
 _session = requests.Session()
@@ -11,6 +12,12 @@ def call_api(
     messages, model="deepseek-chat", stream=True, tools=None, response_format=None
 ):
     config = get_config()
+
+    # Route non-DeepSeek models to generic handler
+    if not (
+        model.startswith("deepseek") or model in ["deepseek-chat", "deepseek-reasoner"]
+    ):
+        return call_generic_api(messages, model, stream, tools, response_format)
 
     def get_params(target_model):
         headers = {

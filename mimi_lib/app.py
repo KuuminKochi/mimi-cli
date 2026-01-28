@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from mimi_lib.config import SESSION_DIR, WORKING_SET_FILE, VAULT_PATH, get_config
+from mimi_lib.config_extended import MODEL_ALIASES, resolve_alias
 from mimi_lib.ui.ansi import clear_screen
 from mimi_lib.ui.input import VimInput
 from mimi_lib.ui.printer import StreamPrinter
@@ -19,6 +20,7 @@ from mimi_lib.utils.text import Colors, get_layout, visible_len, visible_wrap
 from mimi_lib.memory.brain import load_system_prompt, save_memory, load_json, save_json
 from mimi_lib.memory.embeddings import semantic_search
 from mimi_lib.api.provider import call_api
+from mimi_lib.api.generic import call_generic_api
 from mimi_lib.utils.system import get_sys_info
 
 # Import tools to trigger registration
@@ -43,7 +45,7 @@ class MimiApp:
     def __init__(self):
         self.config = get_config()
         self.history: List[Dict[str, Any]] = []
-        self.cur_model = "deepseek-chat"
+        self.cur_model = "chat"
         self.smart_mode = True  # Default to Intelligent Routing
         self.active_turn_model = self.cur_model  # Track resolved model for UI
         self.search_active = False
@@ -162,9 +164,9 @@ class MimiApp:
         ]
 
         if active_skill in instant_skills:
-            return "deepseek-chat"
+            return "chat"
         if active_skill in reasoning_skills:
-            return "deepseek-reasoner"
+            return "reasoner"
 
         # 2. Heuristic Fallback (No Skill)
         text = user_input.lower()
@@ -182,7 +184,7 @@ class MimiApp:
         ]
 
         if any(phrase in text for phrase in explicit_reasoning_phrases):
-            return "deepseek-reasoner"
+            return "reasoner"
 
         # Explicit Instant Triggers
         instant_keywords = [
@@ -198,10 +200,10 @@ class MimiApp:
             "help",
         ]
         if any(text.startswith(w) for w in instant_keywords):
-            return "deepseek-chat"
+            return "chat"
 
         # Default to Chat for speed and efficiency
-        return "deepseek-chat"
+        return "chat"
 
     def run(self):
         clear_screen()
@@ -598,41 +600,47 @@ class MimiApp:
             pass  # Fail silently for auto-rename
 
     def _list_models(self, indent):
-        """Display available models with descriptions."""
-        from mimi_lib.config import AVAILABLE_MODELS
-
+        """Display available models with aliases."""
         print(f"{indent}Available Models:")
         print(f"{indent}{'─' * 50}")
 
-        for model_id, info in AVAILABLE_MODELS.items():
+        for alias, info in MODEL_ALIASES.items():
             marker = (
                 f"{Colors.GREEN}[ACTIVE]{Colors.RESET}"
-                if model_id == self.cur_model
+                if alias == self.cur_model
                 else "       "
             )
             provider = info["provider"].upper()
             desc = info["description"]
-            print(f"{indent}  {marker} {model_id}")
+            full_id = info["id"]
+            print(f"{indent}  {marker} {alias}")
             print(
-                f"{indent}          {Colors.DIM}Provider: {provider} | {desc}{Colors.RESET}"
+                f"{indent}          {Colors.DIM}ID: {full_id} | Provider: {provider} | {desc}{Colors.RESET}"
             )
 
     def _switch_model(self, model_arg, indent):
-        """Switch to specified model, disabling smart routing."""
+        """Switch to specified model by alias or full ID."""
         if self.smart_mode:
             self.smart_mode = False
             print(
                 f"{indent}{Colors.YELLOW}Smart routing disabled for manual model selection{Colors.RESET}\n"
             )
 
-        self.cur_model = model_arg
-        print(f"{indent}Switched base model to: {Colors.CYAN}{model_arg}{Colors.RESET}")
+        model_config = resolve_alias(model_arg)
 
-        from mimi_lib.config import AVAILABLE_MODELS
-
-        if model_arg in AVAILABLE_MODELS:
-            desc = AVAILABLE_MODELS[model_arg]["description"]
-            print(f"{indent}  {Colors.DIM}({desc}){Colors.RESET}")
+        if model_config:
+            self.cur_model = model_arg
+            print(
+                f"{indent}Switched base model to: {Colors.CYAN}{model_arg}{Colors.RESET}"
+            )
+            print(
+                f"{indent}  {Colors.DIM}({model_config['description']}){Colors.RESET}"
+            )
+        else:
+            self.cur_model = model_arg
+            print(
+                f"{indent}Switched base model to: {Colors.CYAN}{model_arg}{Colors.RESET}"
+            )
 
     def generate_response(self, width, indent):
         # Skill Heuristic Check
@@ -810,13 +818,25 @@ class MimiApp:
                     t for t in all_tools if t["function"]["name"] in allowed_tools
                 ]
 
-            # Call API with resolved model
-            response = call_api(
-                messages_to_send,
-                model=self.active_turn_model,
-                stream=True,
-                tools=tools_to_use,
-            )
+            # Resolve alias to full model ID and route to appropriate handler
+            alias = self.active_turn_model
+            model_config = resolve_alias(alias)
+            full_model_id = model_config["id"] if model_config else alias
+
+            if full_model_id.startswith("deepseek"):
+                response = call_api(
+                    messages_to_send,
+                    model=full_model_id,
+                    stream=True,
+                    tools=tools_to_use,
+                )
+            else:
+                response = call_generic_api(
+                    messages_to_send,
+                    model=full_model_id,
+                    stream=True,
+                    tools=tools_to_use,
+                )
             if not response:
                 break
 
